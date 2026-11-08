@@ -179,56 +179,6 @@ reproducible. `smoke.js` needs `chromium` on `PATH`.
 
 ---
 
-## 07 — What actually turned out to be hard
-
-Five things, in the order they bit.
-
-1. **A silent NaN.** The output-bias index was read from a cursor that had
-   already advanced, so every creature's thrust was `NaN` and the world died on
-   tick 0. No exception — just an empty canvas.
-
-2. **Random brains don't forage.** The initial population has to be viable
-   enough to found a lineage. Pure random weights are not. Hence the innate
-   reflex.
-
-3. **World-frame senses.** See above. This one is easy to miss because the
-   simulation runs fine; it just never evolves anything interesting.
-
-4. **The cap does the selecting.** If the population sits at `maxPop`, births are
-   rejected at random, so fitness differences stop mattering and genes drift to
-   their bounds. The fix is to make food the limiter and keep the cap as a safety
-   valve. `validate.js` reports `pinned` for exactly this reason.
-
-5. **Predation as a gene fails.** A `carn` gene that trades plant digestion for
-   meat creates a fitness valley: you lose your old food source before you can
-   use the new one, so carnivores never invade. Making size itself the predation
-   trait removes the valley.
-
-> **The one-line version:** food has to do the selecting, not the population cap.
-
-The current defaults were chosen from a multi-seed sweep, not a single lucky
-run. Five seeded runs of 40k ticks each: population 85–463 (mean 151–331),
-45–95 generations, zero extinctions, and the population never pinned to the
-ceiling. Different seeds settle on different strategies — one ends up small,
-fast and predatory (304 kills), another big, slow and nearly peaceful (48
-kills). That divergence is the interesting part, not a bug.
-
-The system is chaotic, so any single run can spend a while in a trough. That is
-what `validate.js` is for: judge the band across seeds, not the last frame.
-
----
-
-## 08 — What's next
-
-- **Seeded runs in the browser** (`?seed=`) so a good world is shareable.
-- **Species tracking** by genome distance, with a stacked population graph.
-- **Sexual reproduction** — crossover plus a compatibility radius would give real
-  species splits instead of one drifting cloud.
-- **Pheromones / trails**, which would make herding and territory behaviour
-  possible with one more input.
-- **Save/load a run** as JSON, since interesting worlds are rare and worth
-  keeping.
-
 <br>
 
 <p align="center"><sub>p5.js · vanilla JavaScript · no build · works offline</sub></p>
