@@ -27,6 +27,7 @@ let showSpeciesCatalog = false;
 let speciesSort = 'id';
 let showPanelDetails = false;
 let showHelp = false;
+let worldOnly = false;
 let flashMsg = '';
 let flashUntil = 0;
 
@@ -99,12 +100,12 @@ function draw() {
 
   if (selected && (selected.dead || selected.energy <= 0)) selected = null;
 
-  background(226, 24, 7);
+  background(worldOnly ? color(226, 28, 8) : color(226, 24, 7));
   push();
   translate(PAD, PAD);
   drawWorld();
   pop();
-  drawPanel();
+  if (!worldOnly) drawPanel();
 }
 
 function sampleWorld() {
@@ -627,7 +628,7 @@ function keyPressed() {
 }
 
 function mousePressed() {
-  if (detailsHit && mouseX >= detailsHit.x && mouseX <= detailsHit.x + detailsHit.w &&
+  if (!worldOnly && detailsHit && mouseX >= detailsHit.x && mouseX <= detailsHit.x + detailsHit.w &&
       mouseY >= detailsHit.y && mouseY <= detailsHit.y + detailsHit.h) {
     showPanelDetails = !showPanelDetails;
     return;
@@ -654,6 +655,41 @@ function touchStarted() {
 }
 
 // -------------------------------------------------------------------- UI --
+function setWorldOnly(on) {
+  worldOnly = !!on;
+  const body = document.body;
+  if (body) body.classList.toggle('world-only', worldOnly);
+  if (typeof resizeCanvas === 'function') {
+    resizeCanvas(worldOnly ? W + PAD * 2 : W + PANEL + PAD * 3,
+                 worldOnly ? H + PAD * 2 : PH + PAD * 2);
+  }
+  const exit = document.getElementById('btn-exit-world');
+  if (exit) exit.style.display = worldOnly ? 'block' : '';
+  syncUI();
+}
+
+function toggleFullscreenWorld() {
+  if (worldOnly) {
+    try { if (document.fullscreenElement) document.exitFullscreen(); } catch (_) {}
+    setWorldOnly(false);
+    return;
+  }
+  setWorldOnly(true);
+  try {
+    const root = document.documentElement;
+    if (!document.fullscreenElement && root && root.requestFullscreen) {
+      const p = root.requestFullscreen();
+      if (p && p.catch) p.catch(() => {});
+    }
+  } catch (_) { /* world-only still works without Fullscreen API */ }
+}
+
+if (typeof document !== 'undefined') {
+  document.addEventListener('fullscreenchange', () => {
+    if (!document.fullscreenElement && worldOnly) setWorldOnly(false);
+  });
+}
+
 function setupUI() {
   const $ = (id) => document.getElementById(id);
   if (!$('btn-pause')) return;
@@ -730,6 +766,8 @@ function setupUI() {
     // In restricted contexts, show once per load; it can be dismissed.
     showHelpModal(true);
   }
+  if ($('btn-fullscreen')) $('btn-fullscreen').onclick = toggleFullscreenWorld;
+  if ($('btn-exit-world')) $('btn-exit-world').onclick = toggleFullscreenWorld;
   $('seed-label').onclick = shareLink;
 }
 
@@ -751,6 +789,10 @@ function syncUI() {
   $('btn-sexual').classList.toggle('on', world.p.sexual);
   if ($('btn-species')) $('btn-species').classList.toggle('on', showSpeciesCatalog);
   if ($('btn-species-fab')) $('btn-species-fab').classList.toggle('on', showSpeciesCatalog);
+  if ($('btn-fullscreen')) {
+    $('btn-fullscreen').textContent = worldOnly ? 'exit world view' : 'fullscreen';
+    $('btn-fullscreen').classList.toggle('on', worldOnly);
+  }
   $('seed-label').textContent = 'seed ' + world.seed;
 }
 
