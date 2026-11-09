@@ -77,25 +77,33 @@
   }
 
   // ---------------------------------------------------------------- genome --
-  // 12 inputs -> 6 tanh hidden -> 2 outputs. 92 weights.
-  // Inputs are egocentric/local: food vec+prox+type, creature vec, energy,
-  // speed, gut fill, local fertility, local hazard, age/condition.
-  const IN = 12, HID = 6, OUT = 2;
+  // 14 inputs -> 6 tanh hidden -> 3 outputs (turn, thrust, effort). 117 weights.
+  // Inputs are egocentric/local: food vec+prox+type, creature vec+threat cue,
+  // energy, speed, gut fill, fertility, hazard, season, condition.
+  const IN = 14, HID = 6, OUT = 3;
   const NW = IN * HID + HID + HID * OUT + OUT;
-  const OLD_IN = 8, OLD_NW = OLD_IN * HID + HID + HID * OUT + OUT;
+  const NW_8_2 = 8 * HID + HID + HID * 2 + 2;
+  const NW_12_2 = 12 * HID + HID + HID * 2 + 2;
 
   function migrateWeights(oldW) {
-    const src = oldW && oldW.length === OLD_NW ? oldW : null;
     const w = new Float32Array(NW);
-    if (!src) return w;
-    for (let j = 0; j < HID; j++) {
-      for (let i = 0; i < OLD_IN; i++) w[j * IN + i] = +src[j * OLD_IN + i] || 0;
-    }
-    for (let j = 0; j < HID; j++) w[IN * HID + j] = +src[OLD_IN * HID + j] || 0;
-    const hbOld = OLD_IN * HID + HID, hbNew = IN * HID + HID;
-    for (let o = 0; o < OUT; o++) for (let j = 0; j < HID; j++) w[hbNew + o * HID + j] = +src[hbOld + o * HID + j] || 0;
-    const obOld = hbOld + HID * OUT, obNew = hbNew + HID * OUT;
-    for (let o = 0; o < OUT; o++) w[obNew + o] = +src[obOld + o] || 0;
+    if (!oldW) return w;
+    let oldIn = 0, oldOut = 0;
+    if (oldW.length === NW) return Float32Array.from(oldW);
+    if (oldW.length === NW_8_2) { oldIn = 8; oldOut = 2; }
+    else if (oldW.length === NW_12_2) { oldIn = 12; oldOut = 2; }
+    else if (oldW.length === IN * HID + HID + HID * 2 + 2) { oldIn = IN; oldOut = 2; }
+    else return w;
+    const src = oldW;
+    const inN = Math.min(oldIn, IN);
+    for (let j = 0; j < HID; j++) for (let i = 0; i < inN; i++) w[j * IN + i] = +src[j * oldIn + i] || 0;
+    for (let j = 0; j < HID; j++) w[IN * HID + j] = +src[oldIn * HID + j] || 0;
+    const hbOld = oldIn * HID + HID, hbNew = IN * HID + HID;
+    const outN = Math.min(oldOut, OUT);
+    for (let o = 0; o < outN; o++) for (let j = 0; j < HID; j++) w[hbNew + o * HID + j] = +src[hbOld + o * HID + j] || 0;
+    const obOld = hbOld + HID * oldOut, obNew = hbNew + HID * OUT;
+    for (let o = 0; o < outN; o++) w[obNew + o] = +src[obOld + o] || 0;
+    if (OUT > oldOut) w[obNew + 2] = 0.35; // effort: moderate default
     return w;
   }
 
@@ -484,25 +492,30 @@
       const w = new Float32Array(NW);
       for (let i = 0; i < NW; i++) w[i] = this.rng.normal() * 0.35;
 
-      // Innate foraging reflex, so generation 0 is not a coin flip that dies
-      // before it can reproduce. Hidden unit 0 steers toward food (food-right
-      // -> turn); hidden unit 1 drives thrust from food-ahead + proximity.
-      // Low/no thrust bias means founders stop when nothing is sensed; the
-      // foraging drive and sprint cost reinforce waiting/cruising over
-      // constant fast movement. These weights are ordinary genes.
+      // Innate foraging reflex. Hid 0 steers toward food; hid 1 drives thrust
+      // from food cues; out 2 (effort) starts moderate so behavior is evolvable.
+      // Low thrust bias means founders rest when idle; costs/drive reinforce it.
       const jitter = () => 0.6 + this.rng.next() * 0.8;
       const hb = IN * HID, ho = IN * HID + HID, ob = IN * HID + HID + HID * OUT;
-      // hid 0: steer toward food
-      w[0 * IN + 1] = 1.5 * jitter();          // food right -> hid 0
+      w[0 * IN + 1] = 1.5 * jitter();          // food right -> hid 0 (turn)
       w[hb + 0] = 0;
-      w[ho + 0 * HID + 0] = 1.8 * jitter();    // hid 0 -> turn
-      // hid 1: thrust from food ahead/proximity; rest when idle
-      w[1 * IN + 0] = 1.8 * jitter();          // food ahead -> hid 1
-      w[1 * IN + 2] = 1.4 * jitter();          // food proximity -> hid 1
-      w[1 * IN + 8] = 0.6 * jitter();          // gut not full / can eat -> hid 1 (input 8)
+      w[ho + 0 * OUT?0:0 + 0] = 0; // placeholder, fixed below
+      w[ho + 0 * HID + 0] = 1.8 * jitter();    // hid 0 -> turn (out 0)
+      // hid 1: thrust
+      w[1 * IN + 0] = 1.8 * jitter();          // food ahead
+      w[1 * IN + 2] = 1.4 * jitter();          // food proximity
+      w[1 * IN + 8] = 0.6 * jitter();          // gut fill awareness
+      w[1 * IN + 12] = 0.3 * jitter();         // season/condition (input 12)
       w[hb + 1] = 0;
-      w[ho + 1 * HID + 1] = 1.6 * jitter();    // hid 1 -> thrust
+      w[ho + 1 * HID + 1] = 1.6 * jitter();    // hid 1 -> thrust (out 1)
+      // hid 2: effort/vigilance from energy, threat, hazard
+      w[2 * IN + 5] = 0.8 * jitter();          // energy
+      w[2 * IN + 10] = -0.5 * jitter();        // hazard -> caution
+      w[2 * IN + 13] = -0.4 * jitter();        // threat cue
+      w[hb + 2] = 0;
+      w[ho + 2 * HID + 2] = 0.8 * jitter();    // hid 2 -> effort (out 2)
       w[ob + 1] = -0.25;                       // thrust bias (rest when idle)
+      w[ob + 2] = 0.35;                        // effort bias (moderate)
       genes.rg = randomRg(this.rng);
       return { genes, w };
     }
@@ -633,6 +646,7 @@
         species: 0,
         speciesHue: 0,
         matedTick: -1,
+        huntCooldown: 0,
         nutrient: 0,
         diet: 0, // EMA of food type eaten: 0 flora, 1 fauna
         biomass: targetMass,
@@ -920,7 +934,8 @@
       for (let i = 0; i < list.length; i++) this.creatureGrid.insert(list[i]);
 
       // logistic regrowth
-      this.spawnAcc += p.foodGrowth * (1 - this.food.length / p.foodCap);
+      const seasonG = 0.72 + 0.56 * (0.5 + 0.5 * Math.sin(this.tick * 0.0017));
+      this.spawnAcc += p.foodGrowth * seasonG * (1 - this.food.length / p.foodCap);
       while (this.spawnAcc >= 1 && this.food.length < p.foodCap) {
         this.spawnFood();
         this.spawnAcc -= 1;
@@ -999,7 +1014,7 @@
       }
 
       // ---- nearest creature + soft separation ----
-      let ox = 0, oy = 0;
+      let ox = 0, oy = 0, nearCue = 0;
       const sepR = Math.max(sense, c.radius * 4);
       const cand2 = this.creatureGrid.query(c.x, c.y, sepR, this._candB);
       let bestCD = Infinity;
@@ -1011,20 +1026,34 @@
         const dy = wrapDelta(o.y - c.y, this.h);
         const d = dx * dx + dy * dy;
 
-        // Predation: any creature can eat one much smaller than itself. Size
-        // is the trait, so there's no gene "valley" to cross: being big is
-        // immediately worth something, and being small is immediately risky.
-        // One prey per tick models handling time and stops a single predator
-        // from clearing a whole shoal in one step.
-        if (p.predation && c.mass > o.mass * p.preySizeRatio) {
+        // Predation: capture depends on size, speed/condition, and prey defense.
+        // Failed attacks cost energy and create handling time; prey may escape.
+        if (p.predation && c.huntCooldown <= 0 && c.mass > o.mass * p.preySizeRatio) {
           const touch = c.radius + o.radius;
           if (d < touch * touch) {
-            const gain = Math.max(0, o.energy) * p.preyEnergyGain + o.mass * p.preyMassGain;
-            c.energy = Math.min(c.maxEnergy, c.energy + gain);
-            c.kills++;
-            o.energy = -1;
-            o.dead = true;
-            break;
+            const ratio = c.mass / (o.mass + 1e-6);
+            const cSpd = Math.sqrt(c.vx * c.vx + c.vy * c.vy);
+            const oSpd = Math.sqrt(o.vx * o.vx + o.vy * o.vy);
+            const spdAdv = clamp((cSpd - oSpd) / ((c.traits.speedMax || 1) + 0.5) + 0.5, 0, 1);
+            const preyDef = clamp((o.tissues ? o.tissues[1] * 0.5 + o.tissues[2] * 0.5 : 0.25), 0, 1);
+            const cond = clamp(c.energy / (c.threshold || 1), 0, 1.2);
+            let pCatch = clamp(0.18 + 0.22 * (ratio - p.preySizeRatio) + 0.22 * spdAdv + 0.10 * cond - 0.28 * preyDef, 0.05, 0.95);
+            if (this.rng.next() < pCatch) {
+              const gain = Math.max(0, o.energy) * p.preyEnergyGain + o.mass * p.preyMassGain;
+              c.energy = Math.min(c.maxEnergy, c.energy + gain);
+              c.kills++;
+              o.energy = -1;
+              o.dead = true;
+              c.huntCooldown = 6 + Math.min(18, ((ratio - 1) * 4) | 0);
+              break;
+            } else {
+              c.huntCooldown = 4;
+              c.energy -= Math.max(0.5, c.threshold * 0.01);
+              const dist = Math.sqrt(Math.max(d, 1e-6));
+              const nx = dx / dist, ny = dy / dist;
+              o.vx += nx * 0.6; o.vy += ny * 0.6; // escape impulse
+              o.energy -= Math.max(0.2, o.threshold * 0.004);
+            }
           }
         }
 
@@ -1035,7 +1064,10 @@
           px -= (dx / dist) * push;
           py -= (dy / dist) * push;
         }
-        if (d < bestCD && d <= sense2) { bestCD = d; ox = dx; oy = dy; }
+        if (d < bestCD && d <= sense2) {
+          bestCD = d; ox = dx; oy = dy;
+          nearCue = clamp((o.mass - c.mass) / (c.mass + 1e-6), -1.5, 1.5);
+        }
       }
       if (px !== 0 || py !== 0) {
         c.x = wrap(c.x + clamp(px, -2, 2), this.w);
@@ -1056,7 +1088,12 @@
       // x/y. That makes "turn toward food" a single positive weight, which
       // evolution can actually find. World-frame inputs make it a moving
       // target the network has no heading to solve.
-      const hab = habitatAt(c.x, c.y, p, this.habitatSeed);
+      const season = 0.5 + 0.5 * Math.sin(this.tick * 0.0017 + (this.habitatSeed & 0xff) * 0.01);
+      const hab0 = habitatAt(c.x, c.y, p, this.habitatSeed);
+      const hab = {
+        fertility: clamp(hab0.fertility * (0.75 + 0.5 * season), 0.03, 1),
+        hazard: clamp(hab0.hazard * (0.82 + 0.35 * (1 - season)), 0, 1),
+      };
       const fType = bestF ? (bestF.type | 0) : 0;
       const ch = Math.cos(c.heading), sh = Math.sin(c.heading);
       const inp = this._in;
@@ -1072,6 +1109,8 @@
       inp[9] = hab.fertility;
       inp[10] = hab.hazard;
       inp[11] = bestF ? fType : 0;
+      inp[12] = season;
+      inp[13] = clamp(nearCue / 1.5, -1, 1);
 
       const w = c.w;
       const hid = this._hid;
@@ -1089,16 +1128,19 @@
         out[o] = Math.tanh(s);
       }
 
+      if (c.huntCooldown > 0) c.huntCooldown--;
       // ---- act ----
       const turn = out[0];
       const thrust = (out[1] + 1) * 0.5;
+      const effort = (out[2] + 1) * 0.5; // 0..1 brain-controlled exertion
       c.heading = wrap(c.heading + turn * p.maxTurn, TAU);
 
-      // Move only when there is reason to: stop/wait when no resources sensed,
-      // cruise toward sensed food/creatures, sprint costs much more energy.
-      const drive = Math.max(fprox, bestCD < Infinity ? p.senseDrive : 0);
+      // Move with ecological context: sensed resources raise drive, but effort
+      // lets creatures choose to search or conserve; sprinting is costly.
+      const driveBase = Math.max(fprox, bestCD < Infinity ? p.senseDrive : 0);
+      const motivation = clamp(driveBase + effort * (0.55 - 0.30 * hab.hazard), 0, 1);
       const idleDamp = p.idleDamp != null ? p.idleDamp : 0.10;
-      const tv = thrust * c.traits.speedMax * (idleDamp + (1 - idleDamp) * clamp(drive, 0, 1));
+      const tv = thrust * c.traits.speedMax * (idleDamp + (1 - idleDamp) * motivation);
       c.vx += (Math.cos(c.heading) * tv - c.vx) * p.steer;
       c.vy += (Math.sin(c.heading) * tv - c.vy) * p.steer;
       c.x = wrap(c.x + c.vx, this.w);
@@ -1159,6 +1201,7 @@
           if (grow > 0) {
             this.setBiomass(c, c.biomass + grow);
             c.energy -= grow * p.growthCost;
+            this.computeTraits(c);
           }
         }
       }
@@ -1173,6 +1216,7 @@
           c.energy = -1;
         } else {
           this.setBiomass(c, c.biomass);
+          this.computeTraits(c);
         }
       }
 
@@ -1197,7 +1241,7 @@
     // ------------------------------------------------------------ serialize --
     serialize() {
       return {
-        version: 6,
+        version: 7,
         seed: this.seed,
         habitatSeed: this.habitatSeed >>> 0,
         rng: this.rng.state >>> 0,
@@ -1251,6 +1295,8 @@
           kills: c.kills,
           children: c.children,
           age: c.age,
+          matedTick: c.matedTick | 0,
+          huntCooldown: c.huntCooldown | 0,
           species: c.species,
           speciesHue: c.speciesHue,
           // Current regulatory state. Without it a resumed creature would
@@ -1261,7 +1307,7 @@
     }
 
     static fromJSON(obj) {
-      if (!obj || (obj.version !== 1 && obj.version !== 2 && obj.version !== 3 && obj.version !== 4 && obj.version !== 5 && obj.version !== 6)) {
+      if (!obj || (obj.version !== 1 && obj.version !== 2 && obj.version !== 3 && obj.version !== 4 && obj.version !== 5 && obj.version !== 6 && obj.version !== 7)) {
         throw new Error('Unsupported save file');
       }
       const params = Object.assign({}, obj.params || {});
@@ -1301,7 +1347,7 @@
         }
         let weights;
         if (c.w.length === NW) weights = Float32Array.from(c.w);
-        else if (c.w.length === OLD_NW) weights = migrateWeights(c.w);
+        else if (c.w.length === NW_8_2 || c.w.length === NW_12_2 || c.w.length === IN * HID + HID + HID * 2 + 2) weights = migrateWeights(c.w);
         else throw new Error('Invalid creature in save file');
         // v1/v2 saves have no regulatory genome or state; normalizing fills
         // zeros, which express the structural genes unchanged. v1-v3 saves
@@ -1319,6 +1365,8 @@
         cr.kills = c.kills | 0;
         cr.children = c.children | 0;
         cr.age = c.age | 0;
+        cr.matedTick = c.matedTick == null ? -1 : (c.matedTick | 0);
+        cr.huntCooldown = c.huntCooldown | 0;
         cr.species = c.species | 0;
         cr.speciesHue = +c.speciesHue || 0;
         cr.diet = Number.isFinite(c.diet) ? clamp(+c.diet, 0, 1) : 0;
@@ -1396,7 +1444,7 @@
     stats() {
       const n = this.creatures.length;
       let size = 0, speed = 0, sense = 0, mut = 0, repro = 0, gen = 0, energy = 0, kills = 0;
-      let enzyme = 0, biomass = 0, maturity = 0, nutrient = 0, regActivity = 0;
+      let enzyme = 0, biomass = 0, maturity = 0, nutrient = 0, regActivity = 0, diet = 0;
       let cells = 0, gut = 0, muscle = 0, nerve = 0, gonad = 0;
       for (let i = 0; i < n; i++) {
         const c = this.creatures[i];
@@ -1407,6 +1455,7 @@
         mut += t.mutRate;
         repro += t.reproE;
         enzyme += t.enzyme;
+        diet += c.diet || 0;
         for (let j = 0; j < REG_N; j++) regActivity += Math.abs(c.reg[j]);
         cells += c.cells;
         gut += c.tissues[0];
@@ -1425,10 +1474,15 @@
       for (let i = 0; i < this.species.length; i++) {
         if (this.species[i].count > dominant) dominant = this.species[i].count;
       }
+      let faunaFood = 0;
+      for (let i = 0; i < this.food.length; i++) if (this.food[i].type) faunaFood++;
       return {
         tick: this.tick,
         pop: n,
         food: this.food.length,
+        faunaFood,
+        season: 0.5 + 0.5 * Math.sin(this.tick * 0.0017),
+        diet: diet / d,
         births: this.births,
         deaths: this.deaths,
         immigrants: this.immigrants,
