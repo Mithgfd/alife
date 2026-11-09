@@ -588,13 +588,27 @@ function setupUI() {
       renderSpeciesCatalog();
     };
   }
-  if ($('btn-help')) {
-    $('btn-help').onclick = () => {
-      showHelp = !showHelp;
-      const p = $('help-panel');
-      if (p) { p.classList.toggle('open', showHelp); p.setAttribute('aria-hidden', showHelp ? 'false' : 'true'); }
-      $('btn-help').classList.toggle('on', showHelp);
-    };
+  const showHelpModal = (show) => {
+    const m = $('help-modal');
+    if (!m) return;
+    m.classList.toggle('open', !!show);
+    m.setAttribute('aria-hidden', show ? 'false' : 'true');
+    if ($('btn-help')) $('btn-help').classList.toggle('on', !!show);
+  };
+  const dismissHelp = () => {
+    try { localStorage.setItem('alife-help-dismissed', '1'); } catch (_) {}
+    showHelpModal(false);
+  };
+  if ($('btn-help')) $('btn-help').onclick = () => showHelpModal(true);
+  if ($('btn-help-ok')) $('btn-help-ok').onclick = dismissHelp;
+  if ($('help-modal')) {
+    $('help-modal').addEventListener('click', (e) => { if (e.target && e.target.id === 'help-modal') dismissHelp(); });
+  }
+  try {
+    if (localStorage.getItem('alife-help-dismissed') !== '1') showHelpModal(true);
+  } catch (_) {
+    // In restricted contexts, show once per load; it can be dismissed.
+    showHelpModal(true);
   }
   $('seed-label').onclick = shareLink;
 }
