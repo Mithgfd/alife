@@ -1,7 +1,7 @@
 /* sketch.js — p5 viewer.
  *
  * All simulation state lives in ALife.World. This file only reads it and
- * draws. Nothing here feeds back into the sim except the speed control.
+ * draws. The only things it feeds back are UI toggles and the speed control.
  */
 
 const W = 900;
@@ -15,9 +15,13 @@ let world;
 let stepsPerFrame = 4;
 let paused = false;
 let selected = null;
+let colorBy = 'genes';          // 'genes' | 'species'
 let popHist = [];
 let foodHist = [];
+let speciesHist = [];
 let sampleClock = 0;
+let flashMsg = '';
+let flashUntil = 0;
 
 function setup() {
   const cnv = createCanvas(W + PANEL + PAD * 3, H + PAD * 2);
@@ -25,15 +29,45 @@ function setup() {
   pixelDensity(1);
   colorMode(HSB, 360, 100, 100, 100);
   textFont('ui-monospace, SFMono-Regular, Menlo, Consolas, monospace');
-  resetWorld();
+
+  const q = new URLSearchParams(location.search);
+  const opts = {};
+  if (q.has('seed')) {
+    const n = Number(q.get('seed'));
+    if (Number.isFinite(n)) opts.seed = n >>> 0;
+  }
+  if (q.get('predation') === '0') opts.predation = false;
+  if (q.get('sexual') === '0') opts.sexual = false;
+  if (q.get('sexual') === '1') opts.sexual = true;
+  if (q.get('paused') === '1') paused = true;
+  if (q.get('color') === 'species') colorBy = 'species';
+  const sp = Number(q.get('speed'));
+  if ([1, 4, 16, 64].includes(sp)) stepsPerFrame = sp;
+
+  world = new ALife.World(opts);
+  setupUI();
+  syncUI();
 }
 
-function resetWorld() {
-  world = new ALife.World();
+function resetWorld(seed) {
+  const opts = {};
+  opts.seed = seed !== undefined ? (seed >>> 0) : ((Math.random() * 4294967296) >>> 0);
+  if (world) {
+    opts.predation = world.p.predation;
+    opts.sexual = world.p.sexual;
+  }
+  world = new ALife.World(opts);
   selected = null;
   popHist = [];
   foodHist = [];
+  speciesHist = [];
   sampleClock = 0;
+  syncUI();
+  try {
+    const url = new URL(location.href);
+    url.searchParams.set('seed', opts.seed);
+    history.replaceState(null, '', url);
+  } catch (_) { /* file:// may forbid this; harmless */ }
 }
 
 function draw() {
@@ -43,12 +77,7 @@ function draw() {
     sampleClock++;
     if (sampleClock >= 4) {
       sampleClock = 0;
-      popHist.push(world.creatures.length);
-      foodHist.push(world.food.length);
-      if (popHist.length > 340) {
-        popHist.shift();
-        foodHist.shift();
-      }
+      sampleWorld();
     }
   }
 
@@ -60,6 +89,31 @@ function draw() {
   drawWorld();
   pop();
   drawPanel();
+}
+
+function sampleWorld() {
+  popHist.push(world.creatures.length);
+  foodHist.push(world.food.length);
+
+  const counts = new Map();
+  const hues = new Map();
+  for (let i = 0; i < world.species.length; i++) hues.set(world.species[i].id, world.species[i].hue);
+  for (let i = 0; i < world.creatures.length; i++) {
+    const c = world.creatures[i];
+    counts.set(c.species, (counts.get(c.species) || 0) + 1);
+  }
+  const sample = [];
+  counts.forEach((count, id) => {
+    const hue = hues.has(id) ? hues.get(id) : ((id * 137.508) % 360) / 360;
+    sample.push({ id, count, hue });
+  });
+  speciesHist.push(sample);
+
+  if (popHist.length > 360) {
+    popHist.shift();
+    foodHist.shift();
+    speciesHist.shift();
+  }
 }
 
 // ------------------------------------------------------------------ world --
@@ -85,7 +139,7 @@ function drawWorld() {
   noStroke();
   for (let i = 0; i < world.creatures.length; i++) {
     const c = world.creatures[i];
-    const hue = c.genes.hue * 360;
+    const hue = (colorBy === 'species' ? c.speciesHue : c.genes.hue) * 360;
     const e = clamp01(c.energy / c.threshold);
     fill(hue, 55, 46 + 46 * e, 90);
     circle(c.x, c.y, c.radius * 2);
@@ -95,7 +149,7 @@ function drawWorld() {
   strokeWeight(1);
   for (let i = 0; i < world.creatures.length; i++) {
     const c = world.creatures[i];
-    stroke(c.genes.hue * 360, 45, 100, 85);
+    stroke((colorBy === 'species' ? c.speciesHue : c.genes.hue) * 360, 45, 100, 85);
     const r = c.radius;
     line(c.x, c.y, c.x + Math.cos(c.heading) * r * 2, c.y + Math.sin(c.heading) * r * 2);
   }
@@ -145,6 +199,12 @@ function drawPanel() {
   textSize(10);
   text('evolving foragers', 18, 46);
 
+  textAlign(RIGHT);
+  fill(0, 0, 36);
+  textSize(9);
+  text('seed ' + world.seed, PANEL - 18, 46);
+  textAlign(LEFT);
+
   fill(paused ? 45 : 120, 65, 95);
   circle(PANEL - 24, 26, 8);
 
@@ -154,10 +214,11 @@ function drawPanel() {
   y = row('population', s.pop + ' / ' + world.p.maxPop, y);
   y = row('food', s.food + ' / ' + world.p.foodCap, y);
   y = row('generation', s.maxGen + '  (avg ' + s.avgGen.toFixed(1) + ')', y);
+  y = row('species', String(s.species), y);
   y = row('births / deaths', s.births + ' / ' + s.deaths, y);
   y = row('immigrants', String(s.immigrants), y);
   y = row('kills', String(s.kills), y);
-  y = row('speed', paused ? 'paused' : stepsPerFrame + 'x', y);
+  y = row('reproduction', s.mode, y);
 
   y += 10;
   y = section('GENOME  (mean)', y);
@@ -167,7 +228,7 @@ function drawPanel() {
   y = bar('mutation', s.mutRate, 0.02, 0.6, y, 300);
 
   y += 12;
-  y = section('POPULATION', y);
+  y = section('POPULATION', y, s.species + ' species');
   drawGraph(18, y, PANEL - 36, 84);
   y += 96;
 
@@ -176,6 +237,7 @@ function drawPanel() {
     const c = selected;
     let sy = y + 22;
     sy = row('id / gen', '#' + c.id + '  gen ' + c.gen, sy);
+    sy = row('species', '#' + c.species, sy);
     sy = row('energy', Math.max(0, c.energy).toFixed(0) + ' / ' + c.threshold.toFixed(0), sy);
     sy = energyBar(c, sy);
     sy = row('eaten / kills', c.eaten + ' / ' + c.kills, sy);
@@ -191,12 +253,18 @@ function drawPanel() {
   pop();
 }
 
-function section(name, y) {
+function section(name, y, right) {
   textAlign(LEFT);
   textStyle(BOLD);
   textSize(9);
   fill(0, 0, 34);
   text(name, 18, y);
+  if (right) {
+    textAlign(RIGHT);
+    fill(0, 0, 34);
+    text(right, PANEL - 18, y);
+    textAlign(LEFT);
+  }
   textStyle(NORMAL);
   stroke(226, 16, 26);
   strokeWeight(1);
@@ -269,29 +337,79 @@ function drawGraph(gx, gy, gw, gh) {
   }
   endShape();
 
-  // population, scaled to the ceiling
-  stroke(0, 0, 92, 90);
+  // stacked species, scaled to the visible peak
+  let peak = 1;
+  for (let i = 0; i < n; i++) if (popHist[i] > peak) peak = popHist[i];
+  const scale = Math.max(40, peak * 1.15);
+
+  const hues = new Map();
+  for (let i = 0; i < speciesHist.length; i++) {
+    const sample = speciesHist[i];
+    for (let j = 0; j < sample.length; j++) {
+      if (!hues.has(sample[j].id)) hues.set(sample[j].id, sample[j].hue);
+    }
+  }
+  const ids = Array.from(hues.keys()).sort((a, b) => a - b);
+  const base = new Array(n).fill(0);
+
+  for (let k = 0; k < ids.length; k++) {
+    const id = ids[k];
+    const hue = hues.get(id);
+    noStroke();
+    fill(hue * 360, 55, 72, 55);
+    beginShape();
+    for (let i = 0; i < n; i++) {
+      const cnt = countOf(speciesHist[i], id);
+      vertex(gx + (i / (n - 1)) * gw, gy + gh - ((base[i] + cnt) / scale) * gh);
+    }
+    for (let i = n - 1; i >= 0; i--) {
+      vertex(gx + (i / (n - 1)) * gw, gy + gh - (base[i] / scale) * gh);
+    }
+    endShape(CLOSE);
+    for (let i = 0; i < n; i++) base[i] += countOf(speciesHist[i], id);
+  }
+
+  // total population
+  stroke(0, 0, 94, 90);
   strokeWeight(1.5);
+  noFill();
   beginShape();
   for (let i = 0; i < n; i++) {
-    vertex(gx + (i / (n - 1)) * gw, gy + gh - (popHist[i] / world.p.maxPop) * gh);
+    vertex(gx + (i / (n - 1)) * gw, gy + gh - (popHist[i] / scale) * gh);
   }
   endShape();
   noStroke();
 }
 
+function countOf(sample, id) {
+  for (let i = 0; i < sample.length; i++) if (sample[i].id === id) return sample[i].count;
+  return 0;
+}
+
 // --------------------------------------------------------------- controls --
 function keyPressed() {
-  if (key === ' ') paused = !paused;
+  if (key === ' ') { paused = !paused; syncUI(); return false; }
   if (key === '1') stepsPerFrame = 1;
-  if (key === '2') stepsPerFrame = 4;
-  if (key === '3') stepsPerFrame = 16;
-  if (key === '4') stepsPerFrame = 64;
-  if (key === 'r' || key === 'R') resetWorld();
-  if (key === 'p' || key === 'P') {
+  else if (key === '2') stepsPerFrame = 4;
+  else if (key === '3') stepsPerFrame = 16;
+  else if (key === '4') stepsPerFrame = 64;
+  else if (key === 'r' || key === 'R') resetWorld();
+  else if (key === 'p' || key === 'P') {
     world.p.predation = !world.p.predation;
     flash('predation ' + (world.p.predation ? 'on' : 'off'));
+  } else if (key === 'c' || key === 'C') {
+    colorBy = colorBy === 'genes' ? 'species' : 'genes';
+    flash('colour: ' + colorBy);
+  } else if (key === 's' || key === 'S') {
+    world.p.sexual = !world.p.sexual;
+    flash('reproduction: ' + (world.p.sexual ? 'sexual' : 'asexual'));
+  } else if (key === 'd' || key === 'D') {
+    saveRun();
+  } else if (key === 'l' || key === 'L') {
+    const f = document.getElementById('file');
+    if (f) f.click();
   }
+  syncUI();
 }
 
 function mousePressed() {
@@ -311,10 +429,114 @@ function mousePressed() {
   selected = best;
 }
 
-let flashMsg = '';
-let flashUntil = 0;
+function touchStarted() {
+  mousePressed();
+  return false;
+}
+
+// -------------------------------------------------------------------- UI --
+function setupUI() {
+  const $ = (id) => document.getElementById(id);
+  if (!$('btn-pause')) return;
+
+  $('btn-pause').onclick = () => { paused = !paused; syncUI(); };
+  document.querySelectorAll('[data-speed]').forEach((b) => {
+    b.onclick = () => { stepsPerFrame = +b.dataset.speed; paused = false; syncUI(); };
+  });
+  $('btn-reset').onclick = () => resetWorld();
+  $('btn-share').onclick = shareLink;
+  $('btn-save').onclick = saveRun;
+  $('btn-load').onclick = () => $('file').click();
+  $('file').onchange = loadRun;
+  $('btn-predation').onclick = () => {
+    world.p.predation = !world.p.predation;
+    flash('predation ' + (world.p.predation ? 'on' : 'off'));
+    syncUI();
+  };
+  $('btn-color').onclick = () => {
+    colorBy = colorBy === 'genes' ? 'species' : 'genes';
+    flash('colour: ' + colorBy);
+    syncUI();
+  };
+  $('btn-sexual').onclick = () => {
+    world.p.sexual = !world.p.sexual;
+    flash('reproduction: ' + (world.p.sexual ? 'sexual' : 'asexual'));
+    syncUI();
+  };
+  $('seed-label').onclick = shareLink;
+}
+
+function syncUI() {
+  const $ = (id) => document.getElementById(id);
+  if (!$('btn-pause')) return;
+
+  $('btn-pause').textContent = paused ? 'resume' : 'pause';
+  document.querySelectorAll('[data-speed]').forEach((b) => {
+    b.classList.toggle('on', !paused && +b.dataset.speed === stepsPerFrame);
+  });
+  $('btn-predation').textContent = 'predation: ' + (world.p.predation ? 'on' : 'off');
+  $('btn-predation').classList.toggle('on', world.p.predation);
+  $('btn-color').textContent = 'colour: ' + colorBy;
+  $('btn-color').classList.toggle('on', colorBy === 'species');
+  $('btn-sexual').textContent = 'sex: ' + (world.p.sexual ? 'on' : 'off');
+  $('btn-sexual').classList.toggle('on', world.p.sexual);
+  $('seed-label').textContent = 'seed ' + world.seed;
+}
+
+function shareLink() {
+  const url = new URL(location.href);
+  url.searchParams.set('seed', world.seed);
+  url.searchParams.set('speed', stepsPerFrame);
+  if (colorBy === 'species') url.searchParams.set('color', 'species');
+  else url.searchParams.delete('color');
+  if (!world.p.predation) url.searchParams.set('predation', '0');
+  else url.searchParams.delete('predation');
+  if (!world.p.sexual) url.searchParams.set('sexual', '0');
+  else url.searchParams.delete('sexual');
+
+  const link = url.toString();
+  try { history.replaceState(null, '', link); } catch (_) { /* file:// */ }
+
+  const fallback = () => prompt('Copy this link:', link);
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(link).then(() => flash('link copied'), fallback);
+  } else {
+    fallback();
+  }
+}
+
+function saveRun() {
+  const name = 'alife-' + world.seed + '-' + world.tick + '.json';
+  saveJSON(world.serialize(), name);
+  flash('saved ' + name);
+}
+
+function loadRun(e) {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const next = ALife.World.fromJSON(JSON.parse(reader.result));
+      world = next;
+      selected = null;
+      popHist = [];
+      foodHist = [];
+      speciesHist = [];
+      sampleClock = 0;
+      paused = false;
+      syncUI();
+      flash('loaded seed ' + next.seed);
+    } catch (err) {
+      console.error(err);
+      flash('load failed: ' + err.message);
+    }
+  };
+  reader.readAsText(file);
+  e.target.value = '';
+}
 
 function flash(msg) {
   flashMsg = msg;
-  flashUntil = millis() + 1200;
+  flashUntil = millis() + 1600;
 }

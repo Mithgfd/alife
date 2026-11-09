@@ -17,7 +17,40 @@
     return d;
   }
 
-  // Box-Muller, with one cached spare so we don't waste the second normal.
+  // ---------------------------------------------------------------- random --
+  // One RNG per World, so a seed fully determines a run and two worlds can
+  // exist side by side without stealing each other's random numbers.
+  class Rng {
+    constructor(seed) {
+      this.state = (seed >>> 0) || 0x9e3779b9;
+      this._spare = null;
+    }
+    next() {
+      let a = this.state;
+      a |= 0; a = (a + 0x6d2b79f5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      this.state = a;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    }
+    range(a, b) { return a + this.next() * (b - a); }
+    int(n) { return (this.next() * n) | 0; }
+    pick(arr) { return arr[(this.next() * arr.length) | 0]; }
+    normal() {
+      if (this._spare !== null) { const s = this._spare; this._spare = null; return s; }
+      let u, v, s;
+      do {
+        u = this.next() * 2 - 1;
+        v = this.next() * 2 - 1;
+        s = u * u + v * v;
+      } while (s >= 1 || s === 0);
+      const m = Math.sqrt(-2 * Math.log(s) / s);
+      this._spare = v * m;
+      return u * m;
+    }
+  }
+
+  // Module-level normal, kept for the dev scripts. Worlds never use it.
   let spare = null;
   function randn() {
     if (spare !== null) { const s = spare; spare = null; return s; }
@@ -48,6 +81,36 @@
     { key: 'mutRate',  min: 0.02, max: 0.60, sigma: 0.02 },
     { key: 'reproE',   min: 20,   max: 80,   sigma: 4    },
   ];
+  const GENE_BY_KEY = {};
+  for (let i = 0; i < GENE_DEFS.length; i++) GENE_BY_KEY[GENE_DEFS[i].key] = GENE_DEFS[i];
+
+  // Species / mating distance uses the functional genes. `hue` is deliberately
+  // excluded: it is a neutral marker, so including it would split lineages
+  // every time colour drifted.
+  const SPECIES_KEYS = ['size', 'speedMax', 'sense', 'mutRate', 'reproE'];
+  const SPECIES_RANGES = SPECIES_KEYS.map((k) => GENE_BY_KEY[k].max - GENE_BY_KEY[k].min);
+
+  function genesToVec(genes) {
+    const v = new Array(SPECIES_KEYS.length);
+    for (let i = 0; i < SPECIES_KEYS.length; i++) {
+      const g = GENE_BY_KEY[SPECIES_KEYS[i]];
+      v[i] = (genes[g.key] - g.min) / (g.max - g.min);
+    }
+    return v;
+  }
+
+  function vecDistance(a, b) {
+    let s = 0;
+    for (let i = 0; i < a.length; i++) {
+      const d = a[i] - b[i];
+      s += d * d;
+    }
+    return Math.sqrt(s / a.length);
+  }
+
+  function genomeDistance(a, b) {
+    return vecDistance(genesToVec(a), genesToVec(b));
+  }
 
   // ---------------------------------------------------------------- params --
   const DEFAULTS = {
@@ -93,6 +156,22 @@
     steer: 0.25,     // velocity smoothing toward heading
     reproCost: 0.52, // fraction of threshold the parent spends
     reproShare: 0.42,// fraction of threshold the child receives
+
+    // Species are rebuilt every `speciesInterval` ticks by clustering the
+    // functional genes. `speciesRadius` is a normalized distance (0..1).
+    speciesInterval: 90,
+    speciesRadius: 0.22,
+    speciesGrace: 900,
+    maxSpecies: 12,
+
+    // Sexual reproduction is opt-in. Two compatible, well-fed creatures within
+    // `mateRange` pay the cost together and the child gets a crossover of both
+    // genomes. `mateRadius` is the compatibility distance; lowering it turns
+    // the population into reproductively isolated species.
+    sexual: true,
+    mateRange: 160,
+    mateRadius: 0.80,
+    mateMinEnergy: 0.60,
   };
 
   // ------------------------------------------------------------------ grid --
@@ -148,6 +227,16 @@
       this.immigrants = 0;
       this.deaths = 0;
       this.births = 0;
+      this.sexualBirths = 0;
+      this.asexualBirths = 0;
+
+      this.seed = (opts && opts.seed !== undefined && opts.seed !== null)
+        ? (opts.seed >>> 0)
+        : ((Math.random() * 4294967296) >>> 0);
+      this.rng = new Rng(this.seed);
+
+      this.nextSpeciesId = 1;
+      this.species = [];
 
       this.foodGrid = new Grid(this.w, this.h, 64);
       this.creatureGrid = new Grid(this.w, this.h, 64);
@@ -155,6 +244,7 @@
       // scratch, reused every tick
       this._candA = [];
       this._candB = [];
+      this._candM = [];
       this._in = new Float32Array(IN);
       this._hid = new Float32Array(HID);
       this._out = new Float32Array(OUT);
@@ -162,15 +252,17 @@
       this.patches = [];
       for (let i = 0; i < p.patchCount; i++) {
         this.patches.push({
-          x: Math.random() * this.w,
-          y: Math.random() * this.h,
-          vx: randn() * 0.05,
-          vy: randn() * 0.05,
+          x: this.rng.next() * this.w,
+          y: this.rng.next() * this.h,
+          vx: this.rng.normal() * 0.05,
+          vy: this.rng.normal() * 0.05,
         });
       }
 
       for (let i = 0; i < p.startPop; i++) this.creatures.push(this.randomCreature());
       for (let i = 0; i < p.foodCap * p.seedFood; i++) this.spawnFood();
+
+      this.rebuildSpecies();
     }
 
     // -------------------------------------------------------------- factory --
@@ -178,17 +270,17 @@
       const genes = {};
       for (let i = 0; i < GENE_DEFS.length; i++) {
         const g = GENE_DEFS[i];
-        genes[g.key] = g.min + Math.random() * (g.max - g.min);
+        genes[g.key] = g.min + this.rng.next() * (g.max - g.min);
       }
       const w = new Float32Array(NW);
-      for (let i = 0; i < NW; i++) w[i] = randn() * 0.35;
+      for (let i = 0; i < NW; i++) w[i] = this.rng.normal() * 0.35;
 
       // Innate foraging reflex, so generation 0 is not a coin flip that dies
       // before it can reproduce. Hidden unit 0 steers toward food (food-right
       // -> turn); hidden unit 1 drives thrust from food-ahead + proximity.
       // These weights are ordinary genes: mutation can weaken, invert or
       // rewire them like anything else.
-      const jitter = () => 0.6 + Math.random() * 0.8;
+      const jitter = () => 0.6 + this.rng.next() * 0.8;
       w[0 * IN + 1] = 1.5 * jitter();          // food right -> hid 0
       w[48 + 0] = 0;
       w[54 + 0] = 1.8 * jitter();              // hid 0 -> turn
@@ -204,8 +296,8 @@
       const g = this.randomGenome();
       return this.makeCreature(
         g.genes, g.w, 0,
-        Math.random() * this.w, Math.random() * this.h,
-        Math.random() * TAU
+        this.rng.next() * this.w, this.rng.next() * this.h,
+        this.rng.next() * TAU
       );
     }
 
@@ -224,6 +316,10 @@
         kills: 0,
         children: 0,
         age: 0,
+        dead: false,
+        species: 0,
+        speciesHue: 0,
+        matedTick: -1,
       };
       c.mass075 = Math.pow(c.mass, 0.75);
       c.threshold = this.p.thresholdBase + genes.reproE * c.mass;
@@ -242,17 +338,17 @@
       const genes = {};
       for (let i = 0; i < GENE_DEFS.length; i++) {
         const d = GENE_DEFS[i];
-        let v = g[d.key] + randn() * d.sigma * (d.key === 'mutRate' ? 1 : scale);
+        let v = g[d.key] + this.rng.normal() * d.sigma * (d.key === 'mutRate' ? 1 : scale);
         v = d.wrap ? wrap(v, 1) : clamp(v, d.min, d.max);
         genes[d.key] = v;
       }
 
       const w = new Float32Array(NW);
       for (let i = 0; i < NW; i++) {
-        w[i] = clamp(parent.w[i] + randn() * 0.3 * scale, -6, 6);
+        w[i] = clamp(parent.w[i] + this.rng.normal() * 0.3 * scale, -6, 6);
       }
 
-      const angle = Math.random() * TAU;
+      const angle = this.rng.next() * TAU;
       const child = this.makeCreature(
         genes, w, parent.gen + 1,
         wrap(parent.x + Math.cos(angle) * parent.radius * 1.5, this.w),
@@ -263,19 +359,175 @@
       return child;
     }
 
+    // Crossover: each gene and each weight is inherited from one parent, with
+    // occasional averaging of weights, then mutated at the parents' mean rate.
+    childOfSexual(a, b) {
+      const p = this.p;
+      const meanMut = clamp((a.genes.mutRate + b.genes.mutRate) * 0.5, 0.02, 0.6);
+      const scale = meanMut / 0.15;
+
+      const genes = {};
+      for (let i = 0; i < GENE_DEFS.length; i++) {
+        const d = GENE_DEFS[i];
+        let v = this.rng.next() < 0.5 ? a.genes[d.key] : b.genes[d.key];
+        v += this.rng.normal() * d.sigma * (d.key === 'mutRate' ? 1 : scale);
+        v = d.wrap ? wrap(v, 1) : clamp(v, d.min, d.max);
+        genes[d.key] = v;
+      }
+
+      const w = new Float32Array(NW);
+      for (let i = 0; i < NW; i++) {
+        let v = this.rng.next() < 0.5 ? a.w[i] : b.w[i];
+        if (this.rng.next() < 0.3) v = (a.w[i] + b.w[i]) * 0.5;
+        w[i] = clamp(v + this.rng.normal() * 0.3 * scale, -6, 6);
+      }
+
+      const angle = this.rng.next() * TAU;
+      const child = this.makeCreature(
+        genes, w, Math.max(a.gen, b.gen) + 1,
+        wrap((a.x + b.x) * 0.5 + Math.cos(angle) * 10, this.w),
+        wrap((a.y + b.y) * 0.5 + Math.sin(angle) * 10, this.h),
+        angle
+      );
+      child.energy = Math.min(a.threshold, b.threshold) * p.reproShare;
+      return child;
+    }
+
     // ----------------------------------------------------------------- food --
     spawnFood() {
       const p = this.p;
       let x, y;
-      if (this.patches.length && Math.random() < p.patchBias) {
-        const q = this.patches[(Math.random() * this.patches.length) | 0];
-        x = wrap(q.x + randn() * p.patchSpread, this.w);
-        y = wrap(q.y + randn() * p.patchSpread, this.h);
+      if (this.patches.length && this.rng.next() < p.patchBias) {
+        const q = this.patches[this.rng.int(this.patches.length)];
+        x = wrap(q.x + this.rng.normal() * p.patchSpread, this.w);
+        y = wrap(q.y + this.rng.normal() * p.patchSpread, this.h);
       } else {
-        x = Math.random() * this.w;
-        y = Math.random() * this.h;
+        x = this.rng.next() * this.w;
+        y = this.rng.next() * this.h;
       }
       this.food.push({ x, y, e: p.foodEnergy, dead: false });
+    }
+
+    // --------------------------------------------------------------- species --
+    // Greedy clustering over the functional genes. Existing species keep their
+    // id and colour while they have members; new clusters get the next id.
+    // This is a visual/statistical lens, not something the creatures can sense.
+    rebuildSpecies() {
+      const t = this.tick;
+      const list = this.creatures;
+      const old = this.species;
+      for (let i = 0; i < old.length; i++) {
+        old[i].count = 0;
+        old[i].sum.fill(0);
+      }
+
+      for (let i = 0; i < list.length; i++) {
+        const c = list[i];
+        const v = genesToVec(c.genes);
+        let best = null;
+        let bestD = this.p.speciesRadius;
+        for (let k = 0; k < old.length; k++) {
+          const sp = old[k];
+          const d = vecDistance(v, sp.centroid);
+          if (d < bestD) { bestD = d; best = sp; }
+        }
+        if (!best) {
+          best = {
+            id: this.nextSpeciesId++,
+            hue: 0,
+            centroid: v.slice(),
+            sum: new Float64Array(v.length),
+            count: 0,
+            lastSeen: t,
+            peak: 0,
+          };
+          best.hue = ((best.id * 137.508) % 360) / 360;
+          old.push(best);
+        }
+        best.count++;
+        for (let k = 0; k < v.length; k++) best.sum[k] += v[k];
+        c.species = best.id;
+        c.speciesHue = best.hue;
+      }
+
+      for (let i = 0; i < old.length; i++) {
+        const sp = old[i];
+        if (sp.count > 0) {
+          for (let k = 0; k < sp.centroid.length; k++) sp.centroid[k] = sp.sum[k] / sp.count;
+          sp.lastSeen = t;
+          if (sp.count > sp.peak) sp.peak = sp.count;
+        }
+      }
+
+      let kept = old.filter((sp) => sp.count > 0 || t - sp.lastSeen <= this.p.speciesGrace);
+
+      if (kept.length > this.p.maxSpecies) {
+        kept.sort((a, b) => b.count - a.count);
+        kept = kept.slice(0, this.p.maxSpecies);
+        const ids = new Set(kept.map((sp) => sp.id));
+        const fallback = kept[0];
+        for (let i = 0; i < list.length; i++) {
+          const c = list[i];
+          if (!ids.has(c.species)) {
+            c.species = fallback.id;
+            c.speciesHue = fallback.hue;
+          }
+        }
+        for (let i = 0; i < kept.length; i++) kept[i].count = 0;
+        for (let i = 0; i < list.length; i++) {
+          const sp = kept.find((s) => s.id === list[i].species);
+          if (sp) sp.count++;
+        }
+      }
+
+      this.species = kept;
+    }
+
+    // ----------------------------------------------------------- reproduction --
+    reproduceAsexual(c) {
+      c.energy -= c.threshold * this.p.reproCost;
+      const child = this.childOf(c);
+      c.children++;
+      this.asexualBirths++;
+      this.born.push(child);
+    }
+
+    findMate(c) {
+      const p = this.p;
+      const r = p.mateRange;
+      const r2 = r * r;
+      const cand = this.creatureGrid.query(c.x, c.y, r, this._candM);
+      let best = null;
+      let bestD = r2;
+      for (let i = 0; i < cand.length; i++) {
+        const o = cand[i];
+        if (o === c || o.dead || o.matedTick === this.tick) continue;
+        if (o.energy < o.threshold * p.mateMinEnergy) continue;
+        const dx = wrapDelta(o.x - c.x, this.w);
+        const dy = wrapDelta(o.y - c.y, this.h);
+        const d = dx * dx + dy * dy;
+        if (d >= bestD) continue;
+        if (genomeDistance(c.genes, o.genes) > p.mateRadius) continue;
+        best = o;
+        bestD = d;
+      }
+      return best;
+    }
+
+    reproduceSexual(a, b) {
+      const p = this.p;
+      // Each parent pays half, so two-parent reproduction costs the same total
+      // energy as one-parent reproduction. Without this, sex is a 2x tax and
+      // the population collapses whenever mates are scarce.
+      const share = p.reproCost * 0.5;
+      a.energy -= a.threshold * share;
+      b.energy -= b.threshold * share;
+      a.matedTick = this.tick;
+      b.matedTick = this.tick;
+      a.children++;
+      b.children++;
+      this.sexualBirths++;
+      this.born.push(this.childOfSexual(a, b));
     }
 
     // ------------------------------------------------------------------ step --
@@ -316,8 +568,16 @@
       let k = 0;
       for (let i = 0; i < list.length; i++) {
         const c = list[i];
-        if (c.energy > 0) list[k++] = c;
-        else this.deaths++;
+        if (c.energy > 0) {
+          // `dead` is a per-tick marker set by predation. A creature can be
+          // marked dead and still eat later in the same tick, so it may
+          // survive; clear the marker or it would stay invisible to sensing,
+          // predation and mating forever.
+          c.dead = false;
+          list[k++] = c;
+        } else {
+          this.deaths++;
+        }
       }
       list.length = k;
 
@@ -331,11 +591,13 @@
       // seed bank: never let the world go permanently sterile
       if (list.length < p.immigrationBelow) {
         const chance = p.immigrationRate * (1 - list.length / p.immigrationBelow);
-        if (Math.random() < chance) {
+        if (this.rng.next() < chance) {
           list.push(this.randomCreature());
           this.immigrants++;
         }
       }
+
+      if (this.tick % p.speciesInterval === 0) this.rebuildSpecies();
     }
 
     updateCreature(c) {
@@ -476,15 +738,155 @@
       // ---- reproduce ----
       if (
         c.energy >= c.threshold &&
+        c.matedTick !== this.tick &&
         this.creatures.length + this.born.length < p.maxPop
       ) {
-        c.energy -= c.threshold * p.reproCost;
-        const child = this.childOf(c);
-        c.children++;
-        this.born.push(child);
+        if (p.sexual) {
+          const mate = this.findMate(c);
+          if (mate) this.reproduceSexual(c, mate);
+        } else {
+          this.reproduceAsexual(c);
+        }
       }
 
       if (c.energy > c.maxEnergy) c.energy = c.maxEnergy;
+    }
+
+    // ------------------------------------------------------------ serialize --
+    serialize() {
+      return {
+        version: 1,
+        seed: this.seed,
+        rng: this.rng.state >>> 0,
+        // Rng.normal() keeps one sample in reserve; without it a resumed run
+        // draws a different sequence than the saved one.
+        rngSpare: this.rng._spare,
+        tick: this.tick,
+        nextId: this.nextId,
+        nextSpeciesId: this.nextSpeciesId,
+        // Fractional progress toward the next food spawn; without it a
+        // resumed world spawns food one tick out of phase and diverges.
+        spawnAcc: this.spawnAcc,
+        births: this.births,
+        deaths: this.deaths,
+        immigrants: this.immigrants,
+        sexualBirths: this.sexualBirths,
+        asexualBirths: this.asexualBirths,
+        params: this.p,
+        patches: this.patches.map((q) => ({ x: q.x, y: q.y, vx: q.vx, vy: q.vy })),
+        food: this.food.map((f) => ({ x: f.x, y: f.y, e: f.e })),
+        species: this.species.map((sp) => ({
+          id: sp.id,
+          hue: sp.hue,
+          centroid: Array.from(sp.centroid),
+          count: sp.count,
+          lastSeen: sp.lastSeen,
+          peak: sp.peak,
+        })),
+        creatures: this.creatures.map((c) => ({
+          id: c.id,
+          gen: c.gen,
+          genes: c.genes,
+          w: Array.from(c.w),
+          x: c.x, y: c.y, heading: c.heading,
+          vx: c.vx, vy: c.vy,
+          energy: c.energy,
+          eaten: c.eaten,
+          kills: c.kills,
+          children: c.children,
+          age: c.age,
+          species: c.species,
+          speciesHue: c.speciesHue,
+        })),
+      };
+    }
+
+    static fromJSON(obj) {
+      if (!obj || obj.version !== 1) throw new Error('Unsupported save file');
+      const params = Object.assign({}, obj.params || {});
+      const w = new World(Object.assign({}, params, {
+        seed: obj.seed,
+        startPop: 0,
+        seedFood: 0,
+      }));
+
+      w.p.startPop = params.startPop !== undefined ? params.startPop : DEFAULTS.startPop;
+      w.p.seedFood = params.seedFood !== undefined ? params.seedFood : DEFAULTS.seedFood;
+
+      w.tick = obj.tick | 0;
+      w.nextId = obj.nextId | 0;
+      w.nextSpeciesId = obj.nextSpeciesId | 0;
+      w.spawnAcc = Number.isFinite(obj.spawnAcc) ? +obj.spawnAcc : 0;
+      w.births = obj.births | 0;
+      w.deaths = obj.deaths | 0;
+      w.immigrants = obj.immigrants | 0;
+      w.sexualBirths = obj.sexualBirths | 0;
+      w.asexualBirths = obj.asexualBirths | 0;
+      w.rng.state = (obj.rng >>> 0) || 1;
+      w.rng._spare = (typeof obj.rngSpare === 'number' && Number.isFinite(obj.rngSpare))
+        ? obj.rngSpare
+        : null;
+
+      w.patches = (obj.patches || []).map((q) => ({
+        x: +q.x, y: +q.y, vx: +q.vx || 0, vy: +q.vy || 0,
+      }));
+      w.food = (obj.food || []).map((f) => ({
+        x: +f.x, y: +f.y, e: +f.e, dead: false,
+      }));
+      w.creatures = (obj.creatures || []).map((c) => {
+        if (!c.genes || !Array.isArray(c.w) || c.w.length !== NW) {
+          throw new Error('Invalid creature in save file');
+        }
+        const cr = w.makeCreature(c.genes, Float32Array.from(c.w), c.gen | 0,
+          +c.x, +c.y, +c.heading);
+        cr.id = c.id | 0;
+        cr.vx = +c.vx || 0;
+        cr.vy = +c.vy || 0;
+        cr.energy = +c.energy || 0;
+        cr.eaten = c.eaten | 0;
+        cr.kills = c.kills | 0;
+        cr.children = c.children | 0;
+        cr.age = c.age | 0;
+        cr.species = c.species | 0;
+        cr.speciesHue = +c.speciesHue || 0;
+        return cr;
+      });
+
+      let maxId = 0;
+      for (let i = 0; i < w.creatures.length; i++) maxId = Math.max(maxId, w.creatures[i].id);
+      // makeCreature() bumped w.nextId once per restored creature, so take the
+      // saved value (not the bumped one) and guarantee it clears every id.
+      w.nextId = Math.max(obj.nextId | 0, maxId + 1);
+
+      // Restore the exact species table rather than re-clustering. Rebuilding
+      // here would invent fresh ids and centroids, so a loaded world would not
+      // be the same world. Older save files have no species field; fall back.
+      const savedSpecies = Array.isArray(obj.species) ? obj.species : null;
+      if (savedSpecies) {
+        w.species = savedSpecies.map((sp) => {
+          const centroid = Array.from(sp.centroid || [], Number);
+          const count = sp.count | 0;
+          const sum = new Float64Array(centroid.length);
+          for (let k = 0; k < centroid.length; k++) sum[k] = centroid[k] * count;
+          return {
+            id: sp.id | 0,
+            hue: +sp.hue || 0,
+            centroid,
+            sum,
+            count,
+            lastSeen: sp.lastSeen | 0,
+            peak: sp.peak | 0,
+          };
+        });
+        let maxSpecies = 0;
+        for (let i = 0; i < w.species.length; i++) {
+          maxSpecies = Math.max(maxSpecies, w.species[i].id);
+        }
+        w.nextSpeciesId = Math.max(w.nextSpeciesId, maxSpecies + 1);
+      } else {
+        w.rebuildSpecies();
+      }
+      return w;
     }
 
     // ----------------------------------------------------------------- stats --
@@ -503,6 +905,10 @@
         energy += c.energy / c.threshold;
       }
       const d = n || 1;
+      let dominant = 0;
+      for (let i = 0; i < this.species.length; i++) {
+        if (this.species[i].count > dominant) dominant = this.species[i].count;
+      }
       return {
         tick: this.tick,
         pop: n,
@@ -519,13 +925,19 @@
         reproE: repro / d,
         kills,
         fill: energy / d,
+        species: this.species.length,
+        dominant,
+        sexualBirths: this.sexualBirths,
+        asexualBirths: this.asexualBirths,
+        mode: this.p.sexual ? 'sexual' : 'asexual',
       };
     }
   }
 
   root.ALife = {
-    World, Grid, DEFAULTS, GENE_DEFS,
+    World, Grid, Rng, DEFAULTS, GENE_DEFS,
     IN, HID, OUT, NW,
+    SPECIES_KEYS, genesToVec, vecDistance, genomeDistance,
     randn, clamp, wrap, wrapDelta, TAU,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = root.ALife;

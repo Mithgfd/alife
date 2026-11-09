@@ -10,9 +10,11 @@
 
 <table align="center">
   <tr>
-    <td align="center"><strong>85 – 463</strong><br><sub>population</sub></td>
+    <td align="center"><strong>33 – 404</strong><br><sub>population</sub></td>
     <td align="center">&nbsp;&nbsp;&nbsp;</td>
-    <td align="center"><strong>45 – 95</strong><br><sub>generations</sub></td>
+    <td align="center"><strong>87 – 223</strong><br><sub>generations</sub></td>
+    <td align="center">&nbsp;&nbsp;&nbsp;</td>
+    <td align="center"><strong>1 – 12</strong><br><sub>species</sub></td>
     <td align="center">&nbsp;&nbsp;&nbsp;</td>
     <td align="center"><strong>0</strong><br><sub>extinctions</sub></td>
     <td align="center">&nbsp;&nbsp;&nbsp;</td>
@@ -20,7 +22,7 @@
   </tr>
 </table>
 
-<p align="center"><sub>Five seeded runs × 40k ticks on the shipped defaults.</sub></p>
+<p align="center"><sub>Five seeded runs × 40k ticks on the shipped defaults. Reproduce with <code>node validate.js</code>.</sub></p>
 
 ---
 
@@ -33,17 +35,21 @@ xdg-open index.html    # Linux
 
 No build step, no server, no install. `p5.min.js` is vendored, so it also works offline.
 
+Every world has a seed. Open `index.html?seed=1234` to replay a specific run, or
+press **share** to copy the current seed, speed, and toggles into the URL.
+
 ---
 
 ## 02 — The world
 
 ```text
 alife/
-  index.html   the page
+  index.html   the page and toolbar
   sketch.js    p5 rendering + controls
   sim.js       headless simulation core (no p5, no DOM)
   p5.min.js    vendored, so it works offline
   test.js      one-run metrics
+  repro.js     determinism, RNG isolation, save/load round-trip
   sweep.js     multi-seed parameter sweep
   validate.js  long-horizon check of the defaults
   smoke.js     headless browser smoke test (needs chromium)
@@ -53,17 +59,37 @@ alife/
 
 ## 03 — Controls
 
+The toolbar exposes everything; the keys are shortcuts.
+
 | Key | Action |
 |:---:|:---|
 | <kbd>space</kbd> | Pause / resume |
 | <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd> | 1×, 4×, 16×, 64× simulation speed |
 | <kbd>r</kbd> | Reset with a fresh random world |
 | <kbd>p</kbd> | Toggle predation |
+| <kbd>c</kbd> | Colour by genes or by species |
+| <kbd>s</kbd> | Toggle sexual / asexual reproduction |
+| <kbd>d</kbd> | Download the whole world as JSON |
+| <kbd>l</kbd> | Load a saved world |
 | <kbd>click</kbd> | Inspect a creature: energy, age, kills, genes |
+
+The panel on the right shows world totals, mean genome values, a stacked
+population graph split by species, and the selected creature.
 
 Creature colour comes from its `hue` gene (neutral, so it drifts into lineages).
 Brightness is current energy relative to its reproduction threshold — starving
-creatures dim out.
+creatures dim out. Switch to **colour: species** to see the clustering instead.
+
+### Shareable URLs
+
+| Parameter | Meaning |
+|:---|:---|
+| `seed` | Reproduce a run exactly |
+| `speed` | `1`, `4`, `16`, or `64` steps per frame |
+| `color` | `species` to start in species colour mode |
+| `sexual` | `0` or `1` to force reproduction mode |
+| `predation` | `0` to disable predation |
+| `paused` | `1` to load paused |
 
 ---
 
@@ -104,7 +130,7 @@ Outputs: `turn ∈ [−1, 1]`, `thrust ∈ [0, 1]`.
 > With forward/right it is one positive weight.
 
 Generation 0 is not pure noise: each genome gets an innate, evolvable
-phototaxis reflex (food-right → turn, food-ahead → thrust). Mutation can weaken,
+foraging reflex (food-right → turn, food-ahead → thrust). Mutation can weaken,
 invert, or rewire it like any other weight. Without it, random brains mostly
 drift in circles and starve before reproducing, and the world never gets off the
 ground.
@@ -121,6 +147,30 @@ Food gives 28 energy. Reproduction costs `0.52 × threshold`; the child gets
 `0.42 × threshold`; the rest is overhead. Threshold is
 `30 + reproE · mass`. The fixed terms stop "be as small as possible" from being
 strictly optimal.
+
+### Sexual reproduction
+
+On by default. A creature above `0.60 × threshold` looks for a compatible mate
+within `mateRange` pixels. Both parents must be close enough in the five
+functional genes (`mateRadius`), and each pays **half** the reproduction cost, so
+two-parent reproduction costs the same total energy as one-parent reproduction.
+The child inherits each gene and each weight from one parent, occasionally
+averages weights, then mutates at the parents' mean `mutRate`.
+
+The half-cost rule matters: charging each parent the full cost makes sex a 2×
+tax, and the population collapses whenever mates are scarce. Press <kbd>s</kbd>
+to compare the two modes.
+
+### Species
+
+Every 90 ticks the world clusters living creatures over five functional genes —
+`size`, `speedMax`, `sense`, `mutRate`, `reproE`. `hue` is deliberately excluded
+because it is neutral and would split lineages every time colour drifted.
+
+Clusters keep their id and colour while they have members. This is a
+visual/statistical lens, not something the creatures can sense: nothing in the
+simulation reads a species label. It exists so you can watch lineages diverge,
+compete, and go extinct.
 
 ### Predation
 
@@ -143,7 +193,24 @@ restart".
 
 ---
 
-## 05 — Knobs worth turning
+## 05 — Determinism and saves
+
+Each `World` owns a seeded RNG. A seed fully determines the run, two worlds can
+exist side by side without sharing randomness, and the simulation never calls
+`Math.random`.
+
+Saving writes the full state: seed, RNG position, tick, parameters, patches,
+food, every creature's genes and weights, and the species table. Loading a save
+continues the *same* run, not merely a similar one — `repro.js` checks that two
+worlds are byte-identical 2,000 ticks after a save/load round-trip.
+
+```bash
+node repro.js
+```
+
+---
+
+## 06 — Knobs worth turning
 
 All in `DEFAULTS` at the top of `sim.js`.
 
@@ -159,23 +226,33 @@ All in `DEFAULTS` at the top of `sim.js`.
 | `thresholdBase` | Fixed reproduction cost; keeps small bodies from being free. |
 | `patchBias` | 0 = uniform food, 1 = fully clustered. |
 | `immigrationBelow` | Extinction insurance. |
+| `sexual` | Default reproduction mode. |
+| `mateRange`, `mateMinEnergy` | How far and how well-fed a mate must be. |
+| `mateRadius` | Compatibility distance; lower = reproductively isolated species. |
+| `speciesRadius` | Cluster tightness for species colouring. |
+| `speciesInterval` | How often species are rebuilt. |
 
 ---
 
-## 06 — Headless tools
+## 07 — Headless tools
 
 The whole point of keeping `sim.js` free of p5 is that you can measure the
 dynamics instead of squinting at the canvas.
 
 ```bash
-node test.js 40000     # one run, prints population/extinction/oscillation
-node sweep.js          # 6 configs × 3 seeds, prints a comparison table
-node validate.js       # 5 seeds × 80k ticks on the shipped defaults
-node smoke.js          # loads the page in headless chromium, checks for errors
+node test.js 40000            # one run, prints population/extinction/oscillation
+SEED=7 node test.js           # a different world
+node repro.js                 # determinism, RNG isolation, save/load round-trip
+node sweep.js                 # configs × seeds, prints a comparison table
+node validate.js              # 5 seeds × 40k ticks on the shipped defaults
+node smoke.js                 # loads the page in headless chromium, checks the UI
 ```
 
-`test.js`, `sweep.js`, and `validate.js` seed `Math.random`, so results are
-reproducible. `smoke.js` needs `chromium` on `PATH`.
+`test.js`, `repro.js`, `sweep.js`, and `validate.js` are seed-driven, so results
+are reproducible. `smoke.js` needs `chromium` on `PATH`.
+
+Pass criteria for `validate.js`: no run goes extinct, no run pins at `maxPop`,
+and the population stays in a band instead of collapsing.
 
 ---
 
