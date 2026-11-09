@@ -746,18 +746,22 @@ function focusOnSpecies(id) {
 
 function updateCameraFocus() {
   if (!focusSpeciesId || !world) return;
-  let best = null;
+  let best = null, bestScore = -Infinity;
   for (let i = 0; i < world.creatures.length; i++) {
     const c = world.creatures[i];
-    if (c.species === focusSpeciesId) { best = c; break; }
+    if (c.species !== focusSpeciesId) continue;
+    const score = c.energy + c.biomass * 10;
+    if (score > bestScore) { bestScore = score; best = c; }
   }
   if (best) {
     camX = best.x;
     camY = best.y;
-    camZ = worldOnly ? 2.8 : 2.4;
+  }
+  if (worldOnly) {
+    const base = Math.min(width / W, height / H);
+    camZ = Math.max(base * 1.8, Math.min(width, height) / 180);
   } else {
-    // no living member: keep last camera but mark; don't snap away abruptly
-    camZ = worldOnly ? 2.2 : 2.0;
+    camZ = 2.6;
   }
 }
 
@@ -766,8 +770,7 @@ function getWorldTransform() {
   if (worldOnly) {
     if (focusSpeciesId) {
       updateCameraFocus();
-      const z = viewScale * camZ;
-      return { ox: width / 2 - camX * z, oy: height / 2 - camY * z, scale: z };
+      return { ox: width / 2 - camX * camZ, oy: height / 2 - camY * camZ, scale: camZ };
     }
     return { ox: viewOx, oy: viewOy, scale: viewScale };
   }
