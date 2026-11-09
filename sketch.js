@@ -4,11 +4,11 @@
  * draws. The only things it feeds back are UI toggles and the speed control.
  */
 
-const W = 900;
+const W = 920;
 const H = 700;
-const PH = H + 72;               // panel is taller than the world stage
+const PH = H + 140;              // room for optional details without overlap
 const PAD = 14;
-const PANEL = 320;
+const PANEL = 290;
 
 const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
 
@@ -24,6 +24,8 @@ let sampleClock = 0;
 let catalogClock = 0;
 let showSpeciesCatalog = false;
 let speciesSort = 'id';
+let showPanelDetails = false;
+let showHelp = false;
 let flashMsg = '';
 let flashUntil = 0;
 
@@ -141,11 +143,11 @@ function drawWorld() {
   rect(0.5, 0.5, W - 1, H - 1, 10);
   noStroke();
 
-  // food — one fill call for all of it
-  fill(112, 65, 58, 85);
+  // food — dimmed so creatures stand out
+  fill(112, 38, 48, 38);
   for (let i = 0; i < world.food.length; i++) {
     const f = world.food[i];
-    circle(f.x, f.y, 3.6);
+    circle(f.x, f.y, 2.6);
   }
 
   // bodies, brightness = energy
@@ -154,7 +156,7 @@ function drawWorld() {
     const c = world.creatures[i];
     const hue = (colorBy === 'species' ? c.speciesHue : c.genes.hue) * 360;
     const e = clamp01(c.energy / c.threshold);
-    fill(hue, 55, 46 + 46 * e, 90);
+    fill(hue, 58, 50 + 42 * e, 94);
     circle(c.x, c.y, c.radius * 2);
   }
 
@@ -212,104 +214,96 @@ function drawWorld() {
   }
 }
 
+let detailsHit = null;
+
 // ------------------------------------------------------------------ panel --
 function drawPanel() {
   const s = world.stats();
+  detailsHit = null;
   push();
   translate(PAD * 2 + W, PAD);
 
   noStroke();
-  fill(226, 26, 12);
+  fill(226, 24, 13);
   rect(0, 0, PANEL, PH, 10);
 
   textAlign(LEFT);
   fill(0, 0, 100);
-  textSize(14);
+  textSize(15);
   textStyle(BOLD);
-  text('ALIFE', 18, 30);
+  text('ALIFE', 16, 28);
   textStyle(NORMAL);
-  fill(0, 0, 50);
-  textSize(10);
-  text('evolving foragers', 18, 46);
+  fill(paused ? 45 : 120, 65, 95);
+  circle(PANEL - 18, 23, 8);
 
+  // key stats (always visible)
+  fill(0, 0, 96);
+  textSize(13);
+  const key = 'pop ' + s.pop + '   gen ' + s.maxGen + '   species ' + s.species;
+  text(key, 16, 52);
+
+  // details toggle
   textAlign(RIGHT);
-  fill(0, 0, 36);
-  textSize(9);
-  text('seed ' + world.seed, PANEL - 18, 46);
+  textSize(11);
+  fill(140, 45, 85);
+  const tog = showPanelDetails ? '[hide details]' : '[details]';
+  text(tog, PANEL - 16, 52);
+  detailsHit = { x: PAD * 2 + W + PANEL - 96, y: PAD + 40, w: 90, h: 18 };
   textAlign(LEFT);
 
-  fill(paused ? 45 : 120, 65, 95);
-  circle(PANEL - 24, 26, 8);
+  let y = 74;
+  if (showPanelDetails) {
+    y = section('World', y);
+    y = row('tick', s.tick.toLocaleString(), y);
+    y = row('population', s.pop + ' / ' + world.p.maxPop, y);
+    y = row('food', s.food + ' / ' + world.p.foodCap, y);
+    y = row('generation', s.maxGen + '  (avg ' + s.avgGen.toFixed(1) + ')', y);
+    y = row('births / deaths', s.births + ' / ' + s.deaths, y);
+    y = row('kills / immigrants', s.kills + ' / ' + s.immigrants, y);
+    y = row('reproduction', s.mode, y);
+    y += 8;
+    y = section('Genome (mean, realized)', y);
+    y = bar('size', s.size, 0.55, 2.1, y, 200);
+    y = bar('speed', s.speed, 0.2, 2.2, y, 150);
+    y = bar('sense', s.sense, 12, 110, y, 55);
+    y = bar('enzyme', s.enzyme, 0.25, 2.0, y, 90);
+    y = bar('mutation', s.mutRate, 0.02, 0.6, y, 300);
+    y += 8;
+  }
 
-  let y = 78;
-  y = section('WORLD', y);
-  y = row('tick', s.tick.toLocaleString(), y);
-  y = row('population', s.pop + ' / ' + world.p.maxPop, y);
-  y = row('food', s.food + ' / ' + world.p.foodCap, y);
-  y = row('generation', s.maxGen + '  (avg ' + s.avgGen.toFixed(1) + ')', y);
-  y = row('species', String(s.species), y);
-  y = row('births / deaths', s.births + ' / ' + s.deaths, y);
-  y = row('kills / immigrants', s.kills + ' / ' + s.immigrants, y);
-  y = row('reproduction', s.mode, y);
-
-  y += 10;
-  y = section('GENOME  (mean)', y);
-  y = bar('size', s.size, 0.55, 2.1, y, 200);
-  y = bar('speed', s.speed, 0.2, 2.2, y, 150);
-  y = bar('sense', s.sense, 12, 110, y, 55);
-  y = bar('enzyme', s.enzyme, 0.25, 2.0, y, 90);
-  y = bar('mutation', s.mutRate, 0.02, 0.6, y, 300);
-
-  y += 12;
-  y = section('POPULATION', y, s.species + ' species');
-  drawGraph(18, y, PANEL - 36, 84);
-  y += 96;
+  y = section('Population', y, s.species + ' species');
+  drawGraph(16, y, PANEL - 32, 76);
+  y += 92; // fixed graph height + margin; prevents overlap
 
   const spRec = selected && world.allSpecies ? world.allSpecies.find((r) => r.id === selected.species) : null;
-  section('SELECTED CREATURE', y, selected ? ('#' + selected.id + '  sp ' + selected.species) : '');
+  section('Selected creature', y, selected ? ('#' + selected.id) : '');
   if (selected) {
     const c = selected;
     let sy = y + 20;
     let reg = 0;
     if (c.reg) for (let i = 0; i < c.reg.length; i++) reg += Math.abs(c.reg[i]);
     const regAvg = c.reg && c.reg.length ? reg / c.reg.length : 0;
-    const spState = spRec ? (spRec.count > 0 ? 'alive' : 'extinct') : '';
-    sy = rowSmall('identity', 'gen ' + c.gen + '  age ' + c.age + '  children ' + c.children, sy);
-    sy = rowSmall('species', '#' + c.species + (spState ? '  ' + spState : '') + (spRec ? '  peak ' + spRec.peak : ''), sy);
-    sy = rowSmall('position', c.x.toFixed(0) + ', ' + c.y.toFixed(0) + '  v ' + Math.sqrt(c.vx * c.vx + c.vy * c.vy).toFixed(2), sy);
-
-    sy = meter('ATP', Math.max(0, c.energy), 0, c.threshold || 1, sy, 120);
-    sy = meter('nutrient', c.nutrient || 0, 0, c.gutCap || 1, sy, 45);
-    sy = meter('biomass', c.biomass || 0, 0, c.targetMass || 1, sy, 200);
-    sy = rowSmall('body', 'cells ' + (c.cells || 0) + '  mature ' + (c.biomass >= c.matureBiomass ? 'yes' : (100 * c.biomass / (c.targetMass || 1)).toFixed(0) + '%') +
-      '  target ' + (c.targetMass || 0).toFixed(2), sy);
-
+    const spState = spRec ? (spRec.count > 0 ? 'alive' : 'extinct') : 'species ' + c.species;
+    sy = row('status', 'gen ' + c.gen + '  age ' + c.age + '  ' + spState, sy);
+    sy = row('vitals', 'ATP ' + Math.max(0, c.energy).toFixed(0) + '/' + c.threshold.toFixed(0) +
+      '  nut ' + (c.nutrient || 0).toFixed(0) + '/' + (c.gutCap || 0).toFixed(0), sy);
+    sy = row('body', 'bio ' + (c.biomass || 0).toFixed(2) + '/' + (c.targetMass || 0).toFixed(2) +
+      '  cells ' + (c.cells || 0) + '  ' + (c.biomass >= c.matureBiomass ? 'mature' : (100 * c.biomass / (c.targetMass || 1)).toFixed(0) + '%'), sy);
     if (c.tissues) {
-      sy = rowSmall('tissues', 'gut ' + c.tissues[0].toFixed(2) + '  mus ' + c.tissues[1].toFixed(2) +
-        '  ner ' + c.tissues[2].toFixed(2) + '  gon ' + c.tissues[3].toFixed(2), sy);
+      sy = row('tissues', 'gut ' + c.tissues[0].toFixed(2) + ' mus ' + c.tissues[1].toFixed(2) +
+        ' ner ' + c.tissues[2].toFixed(2) + ' gon ' + c.tissues[3].toFixed(2), sy);
     }
-    if (c.genes) {
-      sy = rowSmall('development', 'alloc g' + (c.genes.allocGut || 0).toFixed(2) + ' m' + (c.genes.allocMuscle || 0).toFixed(2) +
-        ' n' + (c.genes.allocNerve || 0).toFixed(2) + ' o' + (c.genes.allocGonad || 0).toFixed(2) +
-        '  timing ' + (c.genes.devTiming || 0).toFixed(2), sy);
-    }
-
     if (c.traits && c.genes) {
-      sy = rowSmall('speed', c.traits.speedMax.toFixed(2) + ' realized  /  ' + c.genes.speedMax.toFixed(2) + ' gene', sy);
-      sy = rowSmall('sense', c.traits.sense.toFixed(0) + ' realized  /  ' + c.genes.sense.toFixed(0) + ' gene', sy);
-      sy = rowSmall('enzyme', c.traits.enzyme.toFixed(2) + ' realized  /  ' + c.genes.enzyme.toFixed(2) + ' gene', sy);
-      sy = rowSmall('mut / repro', c.traits.mutRate.toFixed(2) + ' / ' + c.traits.reproE.toFixed(0) +
-        '  (genes ' + c.genes.mutRate.toFixed(2) + ' / ' + c.genes.reproE.toFixed(0) + ')', sy);
+      sy = row('speed', c.traits.speedMax.toFixed(2) + ' (gene ' + c.genes.speedMax.toFixed(2) + ')', sy);
+      sy = row('sense', c.traits.sense.toFixed(0) + ' (gene ' + c.genes.sense.toFixed(0) + ')', sy);
+      sy = row('enzyme', c.traits.enzyme.toFixed(2) + ' (gene ' + c.genes.enzyme.toFixed(2) + ')', sy);
+      sy = row('mut / repro', c.traits.mutRate.toFixed(2) + ' / ' + c.traits.reproE.toFixed(0), sy);
     }
-    sy = rowSmall('behavior', 'eaten ' + c.eaten + '  kills ' + c.kills + '  reg ' + regAvg.toFixed(2) +
-      (c.matedTick === world.tick ? '  mated' : ''), sy);
+    sy = row('behavior', 'eaten ' + c.eaten + '  kills ' + c.kills + '  children ' + c.children + '  reg ' + regAvg.toFixed(2), sy);
   } else {
-    fill(0, 0, 38);
-    textSize(10);
-    text('click a creature to inspect it', 18, y + 24);
-    textSize(9);
-    fill(0, 0, 30);
-    text('open Species catalog for lineage history', 18, y + 40);
+    fill(0, 0, 62);
+    textSize(12);
+    text('Click a creature to inspect it.', 16, y + 24);
   }
 
   pop();
@@ -317,33 +311,32 @@ function drawPanel() {
 
 function section(name, y, right) {
   textAlign(LEFT);
-  textStyle(BOLD);
-  textSize(9);
-  fill(0, 0, 34);
-  text(name, 18, y);
+  textStyle(NORMAL);
+  textSize(11);
+  fill(0, 0, 72);
+  text(name, 16, y);
   if (right) {
     textAlign(RIGHT);
-    fill(0, 0, 34);
-    text(right, PANEL - 18, y);
+    fill(0, 0, 56);
+    textSize(11);
+    text(right, PANEL - 16, y);
     textAlign(LEFT);
   }
-  textStyle(NORMAL);
-  stroke(226, 16, 26);
-  strokeWeight(1);
-  line(18, y + 8, PANEL - 18, y + 8);
   noStroke();
-  return y + 22;
+  fill(226, 14, 24);
+  rect(16, y + 6, PANEL - 32, 1);
+  return y + 20;
 }
 
 function row(name, value, y, step) {
-  const dy = step || 17;
-  textSize(10);
+  const dy = step || 19;
+  textSize(12);
   textAlign(LEFT);
-  fill(0, 0, 50);
-  text(name, 18, y);
-  fill(0, 0, 92);
+  fill(0, 0, 62);
+  text(name, 16, y);
+  fill(0, 0, 96);
   textAlign(RIGHT);
-  text(value, PANEL - 18, y);
+  text(value, PANEL - 16, y);
   textAlign(LEFT);
   return y + dy;
 }
@@ -379,22 +372,30 @@ function meter(name, v, lo, hi, y, hue) {
 }
 
 function bar(name, v, lo, hi, y, hue) {
-  textSize(10);
+  textSize(12);
   textAlign(LEFT);
-  fill(0, 0, 50);
-  text(name, 18, y);
-  fill(0, 0, 92);
+  fill(0, 0, 64);
+  text(name, 16, y);
+  fill(0, 0, 96);
   textAlign(RIGHT);
-  text(v < 10 ? v.toFixed(2) : v.toFixed(0), PANEL - 18, y);
+  text(v < 10 ? v.toFixed(2) : v.toFixed(0), PANEL - 16, y);
   textAlign(LEFT);
 
   const f = clamp01((v - lo) / (hi - lo));
+  const bx = 16, bw = PANEL - 32;
   noStroke();
-  fill(226, 20, 20);
-  rect(18, y + 5, PANEL - 36, 3, 2);
-  fill(hue, 55, 82, 80);
-  rect(18, y + 5, (PANEL - 36) * f, 3, 2);
-  return y + 21;
+  fill(226, 18, 22);
+  rect(bx, y + 5, bw, 4, 2);
+  fill(hue, 55, 82, 85);
+  rect(bx, y + 5, bw * f, 4, 2);
+  // scale markers
+  fill(0, 0, 44);
+  textSize(9);
+  text(v < 10 ? lo.toFixed(2) : lo.toFixed(0), bx, y + 18);
+  textAlign(RIGHT);
+  text(v < 10 ? hi.toFixed(2) : hi.toFixed(0), bx + bw, y + 18);
+  textAlign(LEFT);
+  return y + 26;
 }
 
 function energyBar(c, y) {
@@ -506,6 +507,11 @@ function keyPressed() {
 }
 
 function mousePressed() {
+  if (detailsHit && mouseX >= detailsHit.x && mouseX <= detailsHit.x + detailsHit.w &&
+      mouseY >= detailsHit.y && mouseY <= detailsHit.y + detailsHit.h) {
+    showPanelDetails = !showPanelDetails;
+    return;
+  }
   const wx = mouseX - PAD;
   const wy = mouseY - PAD;
   if (wx < 0 || wx >= W || wy < 0 || wy >= H) return;
@@ -542,9 +548,10 @@ function setupUI() {
     };
   }
   $('btn-reset').onclick = () => resetWorld();
-  $('btn-share').onclick = shareLink;
-  $('btn-save').onclick = saveRun;
-  $('btn-load').onclick = () => $('file').click();
+  const closeMore = () => { const m = document.getElementById('more-menu'); if (m) m.open = false; };
+  $('btn-share').onclick = () => { closeMore(); shareLink(); };
+  $('btn-save').onclick = () => { closeMore(); saveRun(); };
+  $('btn-load').onclick = () => { closeMore(); $('file').click(); };
   $('file').onchange = loadRun;
   $('btn-predation').onclick = () => {
     world.p.predation = !world.p.predation;
@@ -579,6 +586,14 @@ function setupUI() {
     speciesSortSel.onchange = () => {
       speciesSort = speciesSortSel.value || 'id';
       renderSpeciesCatalog();
+    };
+  }
+  if ($('btn-help')) {
+    $('btn-help').onclick = () => {
+      showHelp = !showHelp;
+      const p = $('help-panel');
+      if (p) { p.classList.toggle('open', showHelp); p.setAttribute('aria-hidden', showHelp ? 'false' : 'true'); }
+      $('btn-help').classList.toggle('on', showHelp);
     };
   }
   $('seed-label').onclick = shareLink;

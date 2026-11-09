@@ -31,16 +31,15 @@
   }
   header {
     width: 100%;
-    max-width: 1262px;
+    max-width: 1252px;
     display: flex;
     align-items: baseline;
     justify-content: space-between;
     gap: 16px;
-    flex-wrap: wrap;
   }
   h1 {
     margin: 0;
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 600;
     letter-spacing: 0.14em;
     text-transform: uppercase;
@@ -52,17 +51,19 @@
   }
   #toolbar {
     width: 100%;
-    max-width: 1262px;
+    max-width: 1252px;
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 8px;
+    gap: 6px 14px;
   }
   #toolbar .group {
     display: flex;
-    gap: 4px;
+    gap: 6px;
     align-items: center;
-    padding-left: 8px;
+  }
+  #toolbar .group + .group {
+    padding-left: 14px;
     border-left: 1px solid var(--line);
   }
   button {
@@ -128,7 +129,7 @@
   #species-panel {
     display: none;
     width: 100%;
-    max-width: 1262px;
+    max-width: 1252px;
     background: var(--panel);
     border: 1px solid var(--line);
     border-radius: 10px;
@@ -208,53 +209,45 @@
     border-radius: 12px;
     box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
   }
-  #hints {
-    width: 100%;
-    max-width: 1262px;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px 18px;
-    color: var(--dim);
-    font-size: 12px;
-  }
-  #hints b {
-    color: var(--ink);
-    font-weight: 600;
-    background: var(--panel);
-    border: 1px solid var(--line);
-    border-radius: 4px;
-    padding: 1px 6px;
-    margin-right: 2px;
-  }
 </style>
 </head>
 <body>
   <header>
-    <h1>ALIFE — evolving foragers</h1>
-    <p>metabolism, gene regulation, development, mutation, sex, predation</p>
+    <h1>ALIFE</h1>
+    <p>evolving foragers in a toroidal world</p>
   </header>
 
   <div id="toolbar">
-    <button id="btn-pause">pause</button>
+    <button id="btn-pause" title="Space">pause</button>
     <span class="group speed-control">
       <label for="speed">speed</label>
-      <input id="speed" type="range" min="1" max="128" value="4" step="1">
+      <input id="speed" type="range" min="1" max="128" value="4" step="1" title="Simulation steps per frame">
       <output id="speed-value" for="speed">4&times;</output>
     </span>
     <span class="group">
-      <button id="btn-reset">reset</button>
-      <button id="btn-share">share</button>
-      <button id="btn-save">save</button>
-      <button id="btn-load">load</button>
+      <button id="btn-reset" title="Reset with a fresh seed (R)">reset</button>
+      <details class="more-menu" id="more-menu">
+        <summary title="Save, load, and share">more</summary>
+        <div class="more-items">
+          <button id="btn-share">copy share link</button>
+          <button id="btn-save">save JSON (D)</button>
+          <button id="btn-load">load JSON (L)</button>
+        </div>
+      </details>
       <input id="file" type="file" accept="application/json" hidden>
     </span>
     <span class="group">
-      <button id="btn-predation">predation: on</button>
-      <button id="btn-color">colour: genes</button>
-      <button id="btn-sexual">sexual: on</button>
-      <button id="btn-species">species catalog</button>
+      <button id="btn-predation" title="Toggle predation (P)">predation: on</button>
+      <button id="btn-color" title="Toggle colour mode (C)">colour: genes</button>
+      <button id="btn-sexual" title="Toggle reproduction mode (S)">sexual: on</button>
+      <button id="btn-species" title="Open species catalog">species catalog</button>
     </span>
+    <button id="btn-help" title="Keyboard shortcuts">?</button>
     <button id="seed-label" class="seed" title="copy a shareable link">seed …</button>
+  </div>
+
+  <div id="help-panel" aria-hidden="true">
+    <b>Shortcuts:</b> Space pause · 1-4 speed presets · R reset · P predation · C colour · S sexual · D save · L load · click a creature to inspect. Use the bottom-left <b>species</b> button for lineage history.
   </div>
 
   <div id="species-panel" aria-hidden="true">
@@ -276,19 +269,7 @@
     <button id="btn-species-fab" type="button" title="Show all species">species</button>
   </div>
 
-  <div id="hints">
-    <span><b>space</b> pause</span>
-    <span><b>1</b>&ndash;<b>4</b> speed presets</span>
-    <span><b>slider</b> fine speed</span>
-    <span><b>r</b> reset</span>
-    <span><b>p</b> predation</span>
-    <span><b>c</b> colour</span>
-    <span><b>s</b> sexual</span>
-    <span><b>d</b> save</span>
-    <span><b>l</b> load</span>
-    <span><b>catalog</b> all species</span>
-    <span><b>click</b> inspect a creature</span>
-  </div>
+
 
   <script src="p5.min.js"></script>
   <script src="sim.js"></script>
