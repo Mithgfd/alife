@@ -9,6 +9,7 @@ const H = 700;
 const PH = H + 140;              // room for optional details without overlap
 const PAD = 14;
 const PANEL = 290;
+const TAU = Math.PI * 2;
 
 const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
 
@@ -132,6 +133,163 @@ function sampleWorld() {
 }
 
 // ------------------------------------------------------------------ world --
+function hash01(a, b, c) {
+  let x = Math.imul((a | 0) ^ 0x9e3779b9, 0x85ebca6b);
+  x ^= Math.imul((b | 0) ^ 0xc2b2ae35, 0x27d4eb2d);
+  x ^= Math.imul((c | 0) ^ 0x165667b1, 0x85ebca6b);
+  x ^= x >>> 16;
+  x = Math.imul(x, 0x7feb352d);
+  x ^= x >>> 15;
+  return ((x >>> 0) % 10000) / 10000;
+}
+
+function drawFoodItem(f) {
+  const h1 = hash01((f.x * 10) | 0, (f.y * 10) | 0, 1);
+  const h2 = hash01((f.x * 10) | 0, (f.y * 10) | 0, 2);
+  const h3 = hash01((f.x * 10) | 0, (f.y * 10) | 0, 3);
+  push();
+  translate(f.x, f.y);
+  rotate(h1 * TAU);
+  const kind = (h2 * 4) | 0;
+  const r = 1.7 + h3 * 1.4;
+  noStroke();
+  if (kind === 0) {
+    fill(105 + h1 * 30, 45, 52, 45);
+    ellipse(0, 0, r * 2.2, r * 1.4);
+  } else if (kind === 1) {
+    fill(88 + h1 * 25, 55, 56, 42);
+    circle(0, 0, r * 2);
+    fill(115, 35, 70, 35);
+    circle(r * 0.25, -r * 0.2, r * 0.7);
+  } else if (kind === 2) {
+    fill(70 + h1 * 35, 50, 58, 42);
+    beginShape();
+    for (let i = 0; i < 5; i++) {
+      const a = (i / 5) * TAU;
+      const rr = r * (i % 2 ? 0.55 : 1.05);
+      vertex(Math.cos(a) * rr, Math.sin(a) * rr);
+    }
+    endShape(CLOSE);
+  } else {
+    fill(125 + h1 * 20, 35, 48, 40);
+    rect(-r * 0.9, -r * 0.35, r * 1.8, r * 0.7, r * 0.35);
+    stroke(95, 30, 45, 35);
+    strokeWeight(0.8);
+    line(-r * 0.2, 0, r * 0.5, 0);
+    noStroke();
+  }
+  pop();
+}
+
+function drawCreatureModel(c) {
+  const hue = (colorBy === 'species' ? c.speciesHue : c.genes.hue) * 360;
+  const e = clamp01(c.energy / c.threshold);
+  const t = c.tissues || [0.25, 0.25, 0.25, 0.25];
+  const muscle = t[1], nerve = t[2], gut = t[0], gonad = t[3];
+  const spd = c.traits && c.traits.speedMax ? c.traits.speedMax : (c.genes.speedMax || 1);
+  const sns = c.traits && c.traits.sense ? c.traits.sense : (c.genes.sense || 40);
+  const idh = hash01(c.id, (c.genes.hue * 1000) | 0, c.gen | 0);
+  const r = c.radius;
+  const len = r * (1.05 + muscle * 0.55 + spd * 0.08);
+  const wid = r * (0.78 + gut * 0.45 - muscle * 0.12);
+  const sat = 52 + gonad * 18;
+  const bri = 48 + 44 * e;
+
+  push();
+  translate(c.x, c.y);
+  rotate(c.heading);
+
+  // tail / propulsion (muscle, speed)
+  const tailN = 1 + (muscle > 0.32 ? 1 : 0) + (spd > 1.6 ? 1 : 0);
+  for (let i = 0; i < tailN; i++) {
+    const ang = (i - (tailN - 1) / 2) * (0.28 + muscle * 0.15);
+    const tl = len * (0.55 + muscle * 0.35 + (idh * 0.15));
+    stroke(hue, sat - 8, bri - 10, 70);
+    strokeWeight(1 + muscle * 1.2);
+    line(-len * 0.55, 0, -len * 0.55 - Math.cos(ang) * tl, Math.sin(ang) * tl);
+  }
+  noStroke();
+
+  // body
+  fill(hue, sat, bri, 95);
+  ellipse(0, 0, len * 2, wid * 2);
+  // dorsal shading
+  fill(hue, sat - 10, bri - 14, 35);
+  ellipse(-len * 0.05, -wid * 0.18, len * 1.35, wid * 0.85);
+  // gut/belly highlight
+  fill(45 + gut * 25, 30 + gut * 20, bri + 6, 28);
+  ellipse(len * 0.05, wid * 0.12, len * (0.7 + gut * 0.4), wid * (0.45 + gut * 0.2));
+
+  // segments (development/cells)
+  if (c.cells >= 4) {
+    stroke(hue, sat - 15, bri - 18, 22);
+    strokeWeight(1);
+    const segs = Math.min(6, 1 + ((c.cells / 12) | 0));
+    for (let i = 1; i < segs; i++) {
+      const sx = -len * 0.7 + (i / segs) * len * 1.4;
+      const sy = wid * Math.sqrt(Math.max(0, 1 - (sx * sx) / (len * len)));
+      line(sx, -sy * 0.7, sx, sy * 0.7);
+    }
+    noStroke();
+  }
+
+  // antennae / sensors (nerve, sense)
+  const antN = sns > 70 ? 2 : sns > 35 ? 1 : 0;
+  if (antN > 0) {
+    stroke(hue, 35, 92, 75);
+    strokeWeight(1);
+    for (let i = 0; i < antN; i++) {
+      const side = antN === 1 ? -1 : (i === 0 ? -1 : 1);
+      const al = r * (0.45 + nerve * 0.7);
+      const ax = len * 0.55;
+      const ay = side * wid * 0.35;
+      line(ax, ay, ax + al * 0.8, ay + side * al);
+      noStroke();
+      fill(55, 50, 95, 80);
+      circle(ax + al * 0.8, ay + side * al, 1.8 + nerve * 1.2);
+      stroke(hue, 35, 92, 75);
+      strokeWeight(1);
+    }
+    noStroke();
+  }
+
+  // eye
+  const ex = len * 0.45, ey = -wid * 0.22;
+  fill(0, 0, 100, 90);
+  circle(ex, ey, 2.2 + nerve * 1.8);
+  fill(220, 60, 20, 90);
+  circle(ex + 0.4, ey, 1 + nerve * 0.8);
+
+  // gonad markings
+  if (gonad > 0.28) {
+    fill(hue + 40, 40, 95, 18 + gonad * 30);
+    const dots = gonad > 0.38 ? 3 : 2;
+    for (let i = 0; i < dots; i++) {
+      circle(-len * 0.1 + i * len * 0.22, wid * 0.38, 1.5 + gonad * 1.5);
+    }
+  }
+
+  pop();
+
+  // subtle tissue composition ring (kept informative but lighter)
+  if (c.cells >= 4) {
+    const tissueHue = [120, 0, 210, 300];
+    noFill();
+    strokeWeight(1);
+    const rr = c.radius + 1.2;
+    let a = c.heading;
+    for (let k = 0; k < 4; k++) {
+      const span = t[k] * TAU;
+      if (span > 0.08) {
+        stroke(tissueHue[k], 45, 75, 35);
+        arc(c.x, c.y, rr * 2, rr * 2, a + 0.04, a + span - 0.04);
+      }
+      a += span;
+    }
+    noStroke();
+  }
+}
+
 function drawWorld() {
   noStroke();
   fill(226, 30, 10);
@@ -143,73 +301,35 @@ function drawWorld() {
   rect(0.5, 0.5, W - 1, H - 1, 10);
   noStroke();
 
-  // food — dimmed so creatures stand out
-  fill(112, 38, 48, 38);
-  for (let i = 0; i < world.food.length; i++) {
-    const f = world.food[i];
-    circle(f.x, f.y, 2.6);
-  }
+  // food — varied procedural models
+  for (let i = 0; i < world.food.length; i++) drawFoodItem(world.food[i]);
 
-  // bodies, brightness = energy
-  noStroke();
-  for (let i = 0; i < world.creatures.length; i++) {
-    const c = world.creatures[i];
-    const hue = (colorBy === 'species' ? c.speciesHue : c.genes.hue) * 360;
-    const e = clamp01(c.energy / c.threshold);
-    fill(hue, 58, 50 + 42 * e, 94);
-    circle(c.x, c.y, c.radius * 2);
-  }
-
-  // tissue rings: body composition as four coloured arcs around each body
-  const tissueHue = [120, 0, 210, 300];
-  noFill();
-  strokeWeight(1.4);
-  for (let i = 0; i < world.creatures.length; i++) {
-    const c = world.creatures[i];
-    if (c.cells < 4) continue;
-    const r = c.radius + 1.5;
-    let a = c.heading;
-    for (let k = 0; k < 4; k++) {
-      const span = c.tissues[k] * TAU;
-      if (span > 0.06) {
-        stroke(tissueHue[k], 60, 82, 65);
-        arc(c.x, c.y, r * 2, r * 2, a + 0.03, a + span - 0.03, OPEN, 5);
-      }
-      a += span;
-    }
-  }
-  noStroke();
-
-  // heading ticks
-  strokeWeight(1);
-  for (let i = 0; i < world.creatures.length; i++) {
-    const c = world.creatures[i];
-    stroke((colorBy === 'species' ? c.speciesHue : c.genes.hue) * 360, 45, 100, 85);
-    const r = c.radius;
-    line(c.x, c.y, c.x + Math.cos(c.heading) * r * 2, c.y + Math.sin(c.heading) * r * 2);
-  }
-  noStroke();
+  // creatures — procedural models driven by genes and tissues
+  for (let i = 0; i < world.creatures.length; i++) drawCreatureModel(world.creatures[i]);
 
   if (selected) {
     noFill();
     stroke(0, 0, 100, 85);
     strokeWeight(1.5);
-    circle(selected.x, selected.y, selected.radius * 2 + 8);
+    circle(selected.x, selected.y, selected.radius * 2 + 10);
     stroke(0, 0, 100, 18);
     strokeWeight(1);
     circle(selected.x, selected.y, selected.traits.sense * 2);
+    stroke(140, 55, 95, 55);
+    const r = selected.radius;
+    line(selected.x, selected.y, selected.x + Math.cos(selected.heading) * r * 2.8, selected.y + Math.sin(selected.heading) * r * 2.8);
     noStroke();
   }
 
   if (flashMsg && millis() < flashUntil) {
     textAlign(CENTER);
-    textSize(11);
+    textSize(12);
     const tw = textWidth(flashMsg) + 26;
     noStroke();
     fill(226, 40, 8, 82);
-    rect(W / 2 - tw / 2, H - 46, tw, 26, 13);
-    fill(0, 0, 95);
-    text(flashMsg, W / 2, H - 28);
+    rect(W / 2 - tw / 2, H - 46, tw, 28, 14);
+    fill(0, 0, 96);
+    text(flashMsg, W / 2, H - 27);
     textAlign(LEFT);
   }
 }
