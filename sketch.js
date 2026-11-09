@@ -31,6 +31,7 @@ let worldOnly = false;
 let viewScale = 1, viewOx = 0, viewOy = 0;
 let camX = W / 2, camY = H / 2, camZ = 1;
 let focusSpeciesId = 0;
+let focusCreatureId = 0;
 let flashMsg = '';
 let flashUntil = 0;
 
@@ -102,7 +103,7 @@ function draw() {
     }
   }
 
-  if (selected && (selected.dead || selected.energy <= 0)) selected = null;
+  if (selected && (selected.dead || selected.energy <= 0)) { selected = null; focusCreatureId = 0; }
 
   background(worldOnly ? color(226, 28, 8) : color(226, 24, 7));
   const vt = getWorldTransform();
@@ -722,7 +723,8 @@ function mousePressed() {
     if (d < bestD) { bestD = d; best = c; }
   }
   selected = best;
-  if (!best && focusSpeciesId) clearCamera();
+  if (best) focusOnCreature(best.id);
+  else if (focusCreatureId || focusSpeciesId) clearCamera();
 }
 
 function touchStarted() {
@@ -732,11 +734,18 @@ function touchStarted() {
 
 // -------------------------------------------------------------------- UI --
 function clearCamera() {
-  camX = W / 2; camY = H / 2; camZ = 1; focusSpeciesId = 0;
+  camX = W / 2; camY = H / 2; camZ = 1; focusSpeciesId = 0; focusCreatureId = 0;
+}
+
+function focusOnCreature(id) {
+  focusCreatureId = id | 0;
+  focusSpeciesId = 0;
+  updateCameraFocus();
 }
 
 function focusOnSpecies(id) {
   focusSpeciesId = id | 0;
+  focusCreatureId = 0;
   updateCameraFocus();
   if (focusSpeciesId) {
     const rec = world && world.allSpecies ? world.allSpecies.find((r) => r.id === focusSpeciesId) : null;
@@ -745,36 +754,46 @@ function focusOnSpecies(id) {
 }
 
 function updateCameraFocus() {
-  if (!focusSpeciesId || !world) return;
-  let best = null, bestScore = -Infinity;
-  for (let i = 0; i < world.creatures.length; i++) {
-    const c = world.creatures[i];
-    if (c.species !== focusSpeciesId) continue;
-    const score = c.energy + c.biomass * 10;
-    if (score > bestScore) { bestScore = score; best = c; }
+  if (!world || (!focusCreatureId && !focusSpeciesId)) return;
+  let target = null;
+  if (focusCreatureId) {
+    for (let i = 0; i < world.creatures.length; i++) {
+      if (world.creatures[i].id === focusCreatureId) { target = world.creatures[i]; break; }
+    }
+    if (!target) focusCreatureId = 0;
   }
-  if (best) {
-    camX = best.x;
-    camY = best.y;
+  if (!target && focusSpeciesId) {
+    let bestScore = -Infinity;
+    for (let i = 0; i < world.creatures.length; i++) {
+      const c = world.creatures[i];
+      if (c.species !== focusSpeciesId) continue;
+      const score = c.energy + c.biomass * 10;
+      if (score > bestScore) { bestScore = score; target = c; }
+    }
+  }
+  if (target) {
+    camX = target.x;
+    camY = target.y;
   }
   if (worldOnly) {
     const base = Math.min(width / W, height / H);
-    camZ = Math.max(base * 1.8, Math.min(width, height) / 180);
+    camZ = Math.max(base * 1.8, Math.min(width, height) / (focusCreatureId ? 150 : 180));
   } else {
-    camZ = 2.6;
+    camZ = focusCreatureId ? 3.0 : 2.6;
   }
 }
 
 function getWorldTransform() {
   // returns {ox, oy, scale} mapping world coords -> canvas coords
+  const focused = !!(focusCreatureId || focusSpeciesId);
   if (worldOnly) {
-    if (focusSpeciesId) {
+    if (focused) {
       updateCameraFocus();
       return { ox: width / 2 - camX * camZ, oy: height / 2 - camY * camZ, scale: camZ };
     }
     return { ox: viewOx, oy: viewOy, scale: viewScale };
   }
-  if (focusSpeciesId) {
+  if (focused) {
     updateCameraFocus();
     return { ox: PAD + W / 2 - camX * camZ, oy: PAD + H / 2 - camY * camZ, scale: camZ };
   }
