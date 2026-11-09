@@ -113,6 +113,7 @@ function draw() {
   }
   pop();
   if (!worldOnly) drawPanel();
+  else if (selected) drawWorldOnlyInspector(selected);
 }
 
 function sampleWorld() {
@@ -343,6 +344,65 @@ function drawWorld() {
 }
 
 let detailsHit = null;
+
+function drawWorldOnlyInspector(c) {
+  if (!c) return;
+  push();
+  const pad = 14, w = 280, x = width - w - pad, y = pad + 42; // below exit button
+  const lh = 18;
+  let reg = 0;
+  if (c.reg) for (let i = 0; i < c.reg.length; i++) reg += Math.abs(c.reg[i]);
+  const regAvg = c.reg && c.reg.length ? reg / c.reg.length : 0;
+  const spRec = world.allSpecies ? world.allSpecies.find((r) => r.id === c.species) : null;
+  const spState = spRec ? (spRec.count > 0 ? 'alive' : 'extinct') : '';
+
+  const lines = [
+    ['id / gen / sp', '#' + c.id + '  gen ' + c.gen + '  sp #' + c.species + (spState ? ' ' + spState : '')],
+    ['age / children', c.age + '  /  ' + c.children],
+    ['ATP', Math.max(0, c.energy).toFixed(0) + ' / ' + c.threshold.toFixed(0)],
+    ['nutrient / gut', (c.nutrient || 0).toFixed(0) + ' / ' + (c.gutCap || 0).toFixed(0)],
+    ['biomass', (c.biomass || 0).toFixed(2) + ' / ' + (c.targetMass || 0).toFixed(2) + '  ' + (c.biomass >= c.matureBiomass ? 'mature' : ((100 * c.biomass / (c.targetMass || 1)).toFixed(0) + '%'))],
+    ['cells', String(c.cells || 0)],
+  ];
+  if (c.tissues) lines.push(['tissues', 'gut ' + c.tissues[0].toFixed(2) + '  mus ' + c.tissues[1].toFixed(2) + '  ner ' + c.tissues[2].toFixed(2) + '  gon ' + c.tissues[3].toFixed(2)]);
+  if (c.traits && c.genes) {
+    lines.push(['speed', c.traits.speedMax.toFixed(2) + '  (gene ' + c.genes.speedMax.toFixed(2) + ')']);
+    lines.push(['sense', c.traits.sense.toFixed(0) + '  (gene ' + c.genes.sense.toFixed(0) + ')']);
+    lines.push(['enzyme', c.traits.enzyme.toFixed(2) + '  (gene ' + c.genes.enzyme.toFixed(2) + ')']);
+    lines.push(['mut / repro', c.traits.mutRate.toFixed(2) + ' / ' + c.traits.reproE.toFixed(0)]);
+  }
+  lines.push(['eaten / kills', c.eaten + ' / ' + c.kills + '  reg ' + regAvg.toFixed(2)]);
+
+  const h = 34 + lines.length * lh + 10;
+  noStroke();
+  fill(226, 28, 10, 82);
+  rect(x, y, w, h, 10);
+  stroke(226, 18, 30, 70);
+  strokeWeight(1);
+  noFill();
+  rect(x, y, w, h, 10);
+  noStroke();
+
+  textAlign(LEFT);
+  fill(0, 0, 100);
+  textSize(13);
+  textStyle(BOLD);
+  text('Selected creature', x + 12, y + 20);
+  textStyle(NORMAL);
+
+  let ty = y + 38;
+  for (let i = 0; i < lines.length; i++) {
+    textSize(11);
+    fill(0, 0, 64);
+    text(lines[i][0], x + 12, ty);
+    fill(0, 0, 96);
+    textAlign(RIGHT);
+    text(lines[i][1], x + w - 12, ty);
+    textAlign(LEFT);
+    ty += lh;
+  }
+  pop();
+}
 
 // ------------------------------------------------------------------ panel --
 function drawPanel() {
