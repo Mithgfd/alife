@@ -6,6 +6,10 @@
   <sub>A small artificial-life world in p5.js. Creatures carry a genome, run a tiny neural net, digest food into ATP and biomass, regulate genes through a heritable network, and develop from a single cell into a body built from four tissues. Food is the only primary resource; everything else is evolution finding a way to convert it into copies of itself.</sub>
 </p>
 
+<p align="center">
+  <a href="https://mithgfd.github.io/alife/">Live demo</a> · <a href="https://github.com/Mithgfd/alife">Source</a> · <a href="LICENSE">MIT License</a>
+</p>
+
 <br>
 
 <table align="center">
@@ -48,11 +52,14 @@ alife/
   sketch.js    p5 rendering + controls
   sim.js       headless simulation core (no p5, no DOM)
   p5.min.js    vendored, so it works offline
-  test.js      one-run metrics
+  test.js      one-run metrics and a pass/fail result
   repro.js     determinism, RNG isolation, save/load round-trip
   sweep.js     multi-seed parameter sweep
-  validate.js  long-horizon check of the defaults
+  validate.js  long-horizon check with immigrant-dependence reporting
+  log.js       per-sample CSV of population and trait means
+  ablate.js    compare regulation/allocation against neutral baselines
   smoke.js     headless browser smoke test (needs chromium)
+  LICENSE      MIT
 ```
 
 ---
@@ -189,9 +196,11 @@ Outputs: `turn ∈ [−1, 1]`, `thrust ∈ [0, 1]`.
 
 Generation 0 is not pure noise: each genome gets an innate, evolvable
 foraging reflex (food-right → turn, food-ahead → thrust). Mutation can weaken,
-invert, or rewire it like any other weight. Without it, random brains mostly
-drift in circles and starve before reproducing, and the world never gets off the
-ground.
+invert, or rewire it like any other weight. In practice this reflex is a
+scaffold: random founder brains without it usually fail to bootstrap, so the
+early dynamics reflect tuning of a hand-seeded behavior as well as search from
+scratch. The reflex is deliberate (otherwise most runs die before selection has
+anything to work with), but ablations and founder sensitivity are worth testing.
 
 ### Metabolism
 
@@ -344,19 +353,25 @@ The whole point of keeping `sim.js` free of p5 is that you can measure the
 dynamics instead of squinting at the canvas.
 
 ```bash
-node test.js 40000            # one run, prints population/extinction/oscillation
+node test.js 40000            # one run, prints summary; exits 1 on extinction
 SEED=7 node test.js           # a different world
 node repro.js                 # determinism, RNG isolation, save/load round-trip
 node sweep.js                 # configs × seeds, prints a comparison table
-node validate.js              # 5 seeds × 40k ticks on the shipped defaults
+node validate.js              # 5 seeds × 40k ticks; reports immigrant dependence
+STRICT=1 node validate.js     # also fail on heavy seed-bank dependence
+node log.js > run.csv         # per-sample CSV for plotting traits over time
+node ablate.js                # neutral regulation/fixed allocation baselines
 node smoke.js                 # loads the page in headless chromium, checks the UI
 ```
 
-`test.js`, `repro.js`, `sweep.js`, and `validate.js` are seed-driven, so results
-are reproducible. `smoke.js` needs `chromium` on `PATH`.
+`test.js`, `repro.js`, `sweep.js`, `validate.js`, `log.js`, and `ablate.js` are
+seed-driven, so results are reproducible. `smoke.js` needs `chromium` on
+`PATH`.
 
-Pass criteria for `validate.js`: no run goes extinct, no run pins at `maxPop`,
-and the population stays in a band instead of collapsing.
+`validate.js` exits 1 if any run goes extinct (and, with `STRICT=1`, if a run is
+pinned at `maxPop` or remains seed-bank dependent after burn-in). It reports
+immigrant counts and a coarse dependence marker so founder/immigration fragility
+is visible rather than hidden.
 
 ---
 

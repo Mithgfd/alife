@@ -71,3 +71,7 @@ console.log(`crash events     ${crashes}`);
 console.log(`oscillation      ${(osc * 100).toFixed(1)}% of mean between samples`);
 console.log(`immigrants       ${world.immigrants}`);
 console.log(`births/deaths    ${world.births}/${world.deaths}  (sexual ${world.sexualBirths} / asexual ${world.asexualBirths})`);
+
+const failed = zeroTicks > 0;
+console.log(`\nresult           ${failed ? 'FAIL (extinction)' : 'ok'}`);
+process.exit(failed ? 1 : 0);
