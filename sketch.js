@@ -30,6 +30,7 @@ let showHelp = false;
 let worldOnly = false;
 let viewScale = 1, viewOx = 0, viewOy = 0;
 let camX = W / 2, camY = H / 2, camZ = 1;
+let camTX = W / 2, camTY = H / 2, camTZ = 1;
 let focusSpeciesId = 0;
 let focusCreatureId = 0;
 let flashMsg = '';
@@ -117,6 +118,7 @@ function draw() {
     else focusCreatureId = 0;
   }
 
+  stepCamera();
   background(worldOnly ? color(226, 28, 8) : color(226, 24, 7));
   const vt = getWorldTransform();
   push();
@@ -378,7 +380,7 @@ function drawWorldOnlyInspector(c) {
   const lines = [
     ['id / gen / sp', '#' + c.id + '  gen ' + c.gen + '  sp #' + c.species + (spState ? ' ' + spState : '')],
     ['age / children', c.age + '  /  ' + c.children],
-    ['ATP', Math.max(0, c.energy).toFixed(0) + ' / ' + c.threshold.toFixed(0)],
+    ['ATP', Math.max(0, c.energy).toFixed(0) + ' / ' + c.threshold.toFixed(0), 'bar-atp'],
     ['nutrient / gut', (c.nutrient || 0).toFixed(0) + ' / ' + (c.gutCap || 0).toFixed(0)],
     ['biomass', (c.biomass || 0).toFixed(2) + ' / ' + (c.targetMass || 0).toFixed(2) + '  ' + (c.biomass >= c.matureBiomass ? 'mature' : ((100 * c.biomass / (c.targetMass || 1)).toFixed(0) + '%'))],
     ['cells', String(c.cells || 0)],
@@ -392,7 +394,9 @@ function drawWorldOnlyInspector(c) {
   }
   lines.push(['eaten / kills', c.eaten + ' / ' + c.kills + '  reg ' + regAvg.toFixed(2)]);
 
-  const h = 34 + lines.length * lh + 10;
+  let extra = 0;
+  for (let i = 0; i < lines.length; i++) if (lines[i][2] === 'bar-atp') extra += 10;
+  const h = 34 + lines.length * lh + extra + 10;
   noStroke();
   fill(226, 28, 10, 82);
   rect(x, y, w, h, 10);
@@ -418,6 +422,16 @@ function drawWorldOnlyInspector(c) {
     textAlign(RIGHT);
     text(lines[i][1], x + w - 12, ty);
     textAlign(LEFT);
+    if (lines[i][2] === 'bar-atp') {
+      const f = clamp01(Math.max(0, c.energy) / (c.threshold || 1));
+      const bx = x + 12, bw = w - 24;
+      noStroke();
+      fill(226, 18, 22);
+      rect(bx, ty + 5, bw, 5, 2);
+      fill(120 * f, 60, 85, 90);
+      rect(bx, ty + 5, bw * f, 5, 2);
+      ty += 10;
+    }
     ty += lh;
   }
   pop();
@@ -492,10 +506,10 @@ function drawPanel() {
     const regAvg = c.reg && c.reg.length ? reg / c.reg.length : 0;
     const spState = spRec ? (spRec.count > 0 ? 'alive' : 'extinct') : 'species ' + c.species;
     sy = row('status', 'gen ' + c.gen + '  age ' + c.age + '  ' + spState, sy);
-    sy = row('vitals', 'ATP ' + Math.max(0, c.energy).toFixed(0) + '/' + c.threshold.toFixed(0) +
-      '  nut ' + (c.nutrient || 0).toFixed(0) + '/' + (c.gutCap || 0).toFixed(0), sy);
-    sy = row('body', 'bio ' + (c.biomass || 0).toFixed(2) + '/' + (c.targetMass || 0).toFixed(2) +
-      '  cells ' + (c.cells || 0) + '  ' + (c.biomass >= c.matureBiomass ? 'mature' : (100 * c.biomass / (c.targetMass || 1)).toFixed(0) + '%'), sy);
+    sy = meter('ATP', Math.max(0, c.energy), 0, c.threshold || 1, sy, 120);
+    sy = row('stores', 'nutrient ' + (c.nutrient || 0).toFixed(0) + '/' + (c.gutCap || 0).toFixed(0) +
+      '  biomass ' + (c.biomass || 0).toFixed(2) + '/' + (c.targetMass || 0).toFixed(2), sy);
+    sy = row('body', 'cells ' + (c.cells || 0) + '  ' + (c.biomass >= c.matureBiomass ? 'mature' : (100 * c.biomass / (c.targetMass || 1)).toFixed(0) + '%'), sy);
     if (c.tissues) {
       sy = row('tissues', 'gut ' + c.tissues[0].toFixed(2) + ' mus ' + c.tissues[1].toFixed(2) +
         ' ner ' + c.tissues[2].toFixed(2) + ' gon ' + c.tissues[3].toFixed(2), sy);
@@ -746,53 +760,63 @@ function touchStarted() {
 
 // -------------------------------------------------------------------- UI --
 function clearCamera() {
-  camX = W / 2; camY = H / 2; camZ = 1; focusSpeciesId = 0; focusCreatureId = 0;
+  camTX = W / 2; camTY = H / 2; camTZ = 1;
+  focusSpeciesId = 0; focusCreatureId = 0;
 }
 
 function focusOnCreature(id) {
   focusCreatureId = id | 0;
   focusSpeciesId = 0;
-  updateCameraFocus();
 }
 
 function focusOnSpecies(id) {
   focusSpeciesId = id | 0;
   focusCreatureId = 0;
-  updateCameraFocus();
   if (focusSpeciesId) {
     const rec = world && world.allSpecies ? world.allSpecies.find((r) => r.id === focusSpeciesId) : null;
     flash('focused species #' + focusSpeciesId + (rec && rec.count === 0 ? ' (extinct view)' : ''));
   }
 }
 
-function updateCameraFocus() {
-  if (!world || (!focusCreatureId && !focusSpeciesId)) return;
-  let target = null;
-  if (focusCreatureId) {
-    for (let i = 0; i < world.creatures.length; i++) {
-      if (world.creatures[i].id === focusCreatureId) { target = world.creatures[i]; break; }
+function updateCameraTargets() {
+  const focused = !!(focusCreatureId || focusSpeciesId);
+  if (world && focused) {
+    let target = null;
+    if (focusCreatureId) {
+      for (let i = 0; i < world.creatures.length; i++) {
+        if (world.creatures[i].id === focusCreatureId) { target = world.creatures[i]; break; }
+      }
+      if (!target) focusCreatureId = 0;
     }
-    if (!target) focusCreatureId = 0;
-  }
-  if (!target && focusSpeciesId) {
-    let bestScore = -Infinity;
-    for (let i = 0; i < world.creatures.length; i++) {
-      const c = world.creatures[i];
-      if (c.species !== focusSpeciesId) continue;
-      const score = c.energy + c.biomass * 10;
-      if (score > bestScore) { bestScore = score; target = c; }
+    if (!target && focusSpeciesId) {
+      let bestScore = -Infinity;
+      for (let i = 0; i < world.creatures.length; i++) {
+        const c = world.creatures[i];
+        if (c.species !== focusSpeciesId) continue;
+        const score = c.energy + c.biomass * 10;
+        if (score > bestScore) { bestScore = score; target = c; }
+      }
     }
-  }
-  if (target) {
-    camX = target.x;
-    camY = target.y;
-  }
-  if (worldOnly) {
-    const base = Math.min(width / W, height / H);
-    camZ = Math.max(base * 1.8, Math.min(width, height) / (focusCreatureId ? 150 : 180));
+    if (target) {
+      camTX = target.x;
+      camTY = target.y;
+    }
+    if (worldOnly) {
+      const base = Math.min(width / W, height / H);
+      camTZ = Math.max(base * 1.8, Math.min(width, height) / (focusCreatureId ? 150 : 180));
+    } else {
+      camTZ = focusCreatureId ? 3.0 : 2.6;
+    }
   } else {
-    camZ = focusCreatureId ? 3.0 : 2.6;
+    camTX = W / 2; camTY = H / 2; camTZ = 1;
   }
+}
+
+function stepCamera() {
+  updateCameraTargets();
+  camX += wrapDeltaLocal(camTX - camX, W) * 0.12;
+  camY += wrapDeltaLocal(camTY - camY, H) * 0.12;
+  camZ += (camTZ - camZ) * 0.12;
 }
 
 function wrapDeltaLocal(d, m) {
@@ -821,13 +845,11 @@ function getWorldTransform() {
   const focused = !!(focusCreatureId || focusSpeciesId);
   if (worldOnly) {
     if (focused) {
-      updateCameraFocus();
       return { ox: width / 2 - camX * camZ, oy: height / 2 - camY * camZ, scale: camZ };
     }
     return { ox: viewOx, oy: viewOy, scale: viewScale };
   }
   if (focused) {
-    updateCameraFocus();
     return { ox: PAD + W / 2 - camX * camZ, oy: PAD + H / 2 - camY * camZ, scale: camZ };
   }
   return { ox: PAD, oy: PAD, scale: 1 };
@@ -852,7 +874,7 @@ function setWorldOnly(on) {
     if (worldOnly) updateWorldOnlyView();
     else resizeCanvas(W + PANEL + PAD * 3, PH + PAD * 2);
   }
-  if (focusSpeciesId) updateCameraFocus();
+  if (focusSpeciesId || focusCreatureId) { updateCameraTargets(); camX = camTX; camY = camTY; camZ = camTZ; }
   const exit = document.getElementById('btn-exit-world');
   if (exit) exit.style.display = worldOnly ? 'block' : '';
   syncUI();
