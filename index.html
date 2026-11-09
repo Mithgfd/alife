@@ -61,6 +61,7 @@
   #toolbar .group {
     display: flex;
     gap: 4px;
+    align-items: center;
     padding-left: 8px;
     border-left: 1px solid var(--line);
   }
@@ -88,7 +89,74 @@
     font-size: 12px;
   }
   button.seed:hover { color: var(--ink); text-decoration: underline; }
-  #stage { line-height: 0; max-width: 100%; }
+  .speed-control {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--dim);
+    font-size: 12px;
+  }
+  .speed-control label { color: var(--dim); }
+  .speed-control output { color: var(--accent); min-width: 38px; }
+  input[type="range"] {
+    width: 140px;
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
+  #stage { line-height: 0; max-width: 100%; position: relative; }
+  #species-panel {
+    display: none;
+    width: 100%;
+    max-width: 1262px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 12px 14px;
+  }
+  #species-panel.open { display: block; }
+  #species-panel h2 {
+    margin: 0 0 10px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--dim);
+  }
+  #species-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 8px;
+    max-height: 320px;
+    overflow: auto;
+  }
+  .species-card {
+    background: #141820;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 11px;
+  }
+  .species-card.alive { border-color: #2f6f5e; }
+  .species-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+  .swatch {
+    width: 10px; height: 10px; border-radius: 50%;
+    flex: 0 0 auto;
+  }
+  .species-id { color: var(--ink); font-weight: 600; }
+  .species-state { color: var(--dim); margin-left: auto; }
+  .species-state.on { color: var(--accent); }
+  .species-traits {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2px 10px;
+    color: var(--dim);
+  }
+  .species-traits span b { color: var(--ink); font-weight: 500; }
   #stage canvas {
     max-width: 100%;
     height: auto;
@@ -118,16 +186,15 @@
 <body>
   <header>
     <h1>ALIFE — evolving foragers</h1>
-    <p>genomes &rarr; tiny neural nets &rarr; food, mutation, sex, predation</p>
+    <p>metabolism, gene regulation, development, mutation, sex, predation</p>
   </header>
 
   <div id="toolbar">
     <button id="btn-pause">pause</button>
-    <span class="group">
-      <button data-speed="1">1&times;</button>
-      <button data-speed="4" class="on">4&times;</button>
-      <button data-speed="16">16&times;</button>
-      <button data-speed="64">64&times;</button>
+    <span class="group speed-control">
+      <label for="speed">speed</label>
+      <input id="speed" type="range" min="1" max="128" value="4" step="1">
+      <output id="speed-value" for="speed">4&times;</output>
     </span>
     <span class="group">
       <button id="btn-reset">reset</button>
@@ -140,22 +207,29 @@
       <button id="btn-predation">predation: on</button>
       <button id="btn-color">colour: genes</button>
       <button id="btn-sexual">sexual: on</button>
+      <button id="btn-species">species catalog</button>
     </span>
     <button id="seed-label" class="seed" title="copy a shareable link">seed …</button>
+  </div>
+
+  <div id="species-panel" aria-hidden="true">
+    <h2 id="species-title">Species catalog</h2>
+    <div id="species-list"></div>
   </div>
 
   <div id="stage"></div>
 
   <div id="hints">
     <span><b>space</b> pause</span>
-    <span><b>1</b>&ndash;<b>4</b> speed</span>
+    <span><b>1</b>&ndash;<b>4</b> speed presets</span>
+    <span><b>slider</b> fine speed</span>
     <span><b>r</b> reset</span>
     <span><b>p</b> predation</span>
     <span><b>c</b> colour</span>
     <span><b>s</b> sexual</span>
     <span><b>d</b> save</span>
     <span><b>l</b> load</span>
-    <span><b>share</b> copy a seed link</span>
+    <span><b>catalog</b> all species</span>
     <span><b>click</b> inspect a creature</span>
   </div>
 

@@ -390,6 +390,7 @@
 
       this.nextSpeciesId = 1;
       this.species = [];
+      this.allSpecies = [];       // permanent record of every species that ever appeared
 
       this.foodGrid = new Grid(this.w, this.h, 64);
       this.creatureGrid = new Grid(this.w, this.h, 64);
@@ -711,6 +712,7 @@
             centroid: v.slice(),
             sum: new Float64Array(v.length),
             count: 0,
+            firstSeen: t,
             lastSeen: t,
             peak: 0,
           };
@@ -754,6 +756,45 @@
       }
 
       this.species = kept;
+      this.recordSpeciesHistory(t);
+    }
+
+    // Persist every species that has ever existed so the UI can show a full
+    // lineage catalog. Centroid values are normalized (SPECIES_KEYS order).
+    recordSpeciesHistory(tick) {
+      for (let i = 0; i < this.species.length; i++) {
+        const sp = this.species[i];
+        let rec = this.allSpecies.find((r) => r.id === sp.id);
+        if (!rec) {
+          rec = {
+            id: sp.id, hue: sp.hue, centroid: sp.centroid.slice(),
+            count: sp.count, peak: sp.peak,
+            firstSeen: sp.firstSeen != null ? sp.firstSeen : tick,
+            lastSeen: sp.lastSeen,
+          };
+          this.allSpecies.push(rec);
+        } else {
+          rec.centroid = sp.centroid.slice();
+          rec.count = sp.count;
+          rec.peak = Math.max(rec.peak, sp.peak);
+          rec.lastSeen = sp.lastSeen;
+        }
+      }
+      const active = new Set(this.species.map((s) => s.id));
+      for (let i = 0; i < this.allSpecies.length; i++) {
+        if (!active.has(this.allSpecies[i].id)) this.allSpecies[i].count = 0;
+      }
+    }
+
+    speciesTraits(rec) {
+      const t = {};
+      for (let i = 0; i < SPECIES_KEYS.length; i++) {
+        const key = SPECIES_KEYS[i];
+        const d = GENE_BY_KEY[key];
+        const n = rec.centroid && rec.centroid[i] != null ? rec.centroid[i] : 0.5;
+        t[key] = d.min + n * (d.max - d.min);
+      }
+      return t;
     }
 
     // ----------------------------------------------------------- reproduction --
@@ -1077,7 +1118,7 @@
     // ------------------------------------------------------------ serialize --
     serialize() {
       return {
-        version: 4,
+        version: 5,
         seed: this.seed,
         rng: this.rng.state >>> 0,
         // Rng.normal() keeps one sample in reserve; without it a resumed run
@@ -1102,8 +1143,18 @@
           hue: sp.hue,
           centroid: Array.from(sp.centroid),
           count: sp.count,
+          firstSeen: sp.firstSeen | 0,
           lastSeen: sp.lastSeen,
           peak: sp.peak,
+        })),
+        allSpecies: this.allSpecies.map((sp) => ({
+          id: sp.id,
+          hue: sp.hue,
+          centroid: Array.from(sp.centroid || []),
+          count: sp.count | 0,
+          firstSeen: sp.firstSeen | 0,
+          lastSeen: sp.lastSeen | 0,
+          peak: sp.peak | 0,
         })),
         creatures: this.creatures.map((c) => ({
           id: c.id,
@@ -1129,7 +1180,7 @@
     }
 
     static fromJSON(obj) {
-      if (!obj || (obj.version !== 1 && obj.version !== 2 && obj.version !== 3 && obj.version !== 4)) {
+      if (!obj || (obj.version !== 1 && obj.version !== 2 && obj.version !== 3 && obj.version !== 4 && obj.version !== 5)) {
         throw new Error('Unsupported save file');
       }
       const params = Object.assign({}, obj.params || {});
@@ -1220,6 +1271,7 @@
             centroid,
             sum,
             count,
+            firstSeen: sp.firstSeen | 0,
             lastSeen: sp.lastSeen | 0,
             peak: sp.peak | 0,
           };
@@ -1229,6 +1281,24 @@
           maxSpecies = Math.max(maxSpecies, w.species[i].id);
         }
         w.nextSpeciesId = Math.max(w.nextSpeciesId, maxSpecies + 1);
+        if (Array.isArray(obj.allSpecies) && obj.allSpecies.length) {
+          w.allSpecies = obj.allSpecies.map((sp) => ({
+            id: sp.id | 0,
+            hue: +sp.hue || 0,
+            centroid: Array.from(sp.centroid || [], Number),
+            count: sp.count | 0,
+            firstSeen: sp.firstSeen | 0,
+            lastSeen: sp.lastSeen | 0,
+            peak: sp.peak | 0,
+          }));
+        } else {
+          // v1-4 saves: seed the permanent catalog from the active table.
+          w.allSpecies = w.species.map((sp) => ({
+            id: sp.id, hue: sp.hue, centroid: sp.centroid.slice(),
+            count: sp.count, firstSeen: sp.firstSeen || 0,
+            lastSeen: sp.lastSeen, peak: sp.peak,
+          }));
+        }
       } else {
         w.rebuildSpecies();
       }

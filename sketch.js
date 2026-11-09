@@ -21,6 +21,8 @@ let popHist = [];
 let foodHist = [];
 let speciesHist = [];
 let sampleClock = 0;
+let catalogClock = 0;
+let showSpeciesCatalog = false;
 let flashMsg = '';
 let flashUntil = 0;
 
@@ -43,7 +45,7 @@ function setup() {
   if (q.get('paused') === '1') paused = true;
   if (q.get('color') === 'species') colorBy = 'species';
   const sp = Number(q.get('speed'));
-  if ([1, 4, 16, 64].includes(sp)) stepsPerFrame = sp;
+  if (Number.isFinite(sp)) stepsPerFrame = Math.max(1, Math.min(128, Math.round(sp)));
 
   world = new ALife.World(opts);
   setupUI();
@@ -63,7 +65,9 @@ function resetWorld(seed) {
   foodHist = [];
   speciesHist = [];
   sampleClock = 0;
+  catalogClock = 0;
   syncUI();
+  renderSpeciesCatalog();
   try {
     const url = new URL(location.href);
     url.searchParams.set('seed', opts.seed);
@@ -79,6 +83,13 @@ function draw() {
     if (sampleClock >= 4) {
       sampleClock = 0;
       sampleWorld();
+    }
+  }
+  if (showSpeciesCatalog) {
+    catalogClock++;
+    if (catalogClock >= 30) {
+      catalogClock = 0;
+      renderSpeciesCatalog();
     }
   }
 
@@ -253,31 +264,51 @@ function drawPanel() {
   drawGraph(18, y, PANEL - 36, 84);
   y += 96;
 
-  section('SELECTED', y);
+  const spRec = selected && world.allSpecies ? world.allSpecies.find((r) => r.id === selected.species) : null;
+  section('SELECTED CREATURE', y, selected ? ('#' + selected.id + '  sp ' + selected.species) : '');
   if (selected) {
     const c = selected;
-    let sy = y + 22;
+    let sy = y + 20;
     let reg = 0;
-    for (let i = 0; i < c.reg.length; i++) reg += Math.abs(c.reg[i]);
-    sy = row('id / gen / sp', '#' + c.id + '  ' + c.gen + '  ' + c.species, sy);
-    sy = row('ATP', Math.max(0, c.energy).toFixed(0) + ' / ' + c.threshold.toFixed(0), sy);
-    sy = energyBar(c, sy);
-    sy = row('nutrient / biomass', c.nutrient.toFixed(0) + ' / ' + c.biomass.toFixed(2), sy);
-    sy = row('cells / mature', c.cells.toFixed(0) + ' / ' +
-      (c.biomass >= c.matureBiomass ? 'yes' : 'no'), sy);
-    sy = row('tissues g m n go', c.tissues[0].toFixed(2) + ' ' + c.tissues[1].toFixed(2) +
-      ' ' + c.tissues[2].toFixed(2) + ' ' + c.tissues[3].toFixed(2), sy);
-    sy = row('size', c.traits.size.toFixed(2), sy);
-    sy = row('speed gene', c.traits.speedMax.toFixed(2) + ' (' + c.genes.speedMax.toFixed(2) + ')', sy);
-    sy = row('sense gene', c.traits.sense.toFixed(0) + ' (' + c.genes.sense.toFixed(0) + ')', sy);
-    sy = row('enzyme reg', c.traits.enzyme.toFixed(2) + ' (' + c.genes.enzyme.toFixed(2) + ')  ' +
-      (reg / c.reg.length).toFixed(2), sy);
-    sy = row('eaten / kills', c.eaten + ' / ' + c.kills, sy);
-    sy = row('children / age', c.children + ' / ' + c.age, sy);
+    if (c.reg) for (let i = 0; i < c.reg.length; i++) reg += Math.abs(c.reg[i]);
+    const regAvg = c.reg && c.reg.length ? reg / c.reg.length : 0;
+    const spState = spRec ? (spRec.count > 0 ? 'alive' : 'extinct') : '';
+    sy = rowSmall('identity', 'gen ' + c.gen + '  age ' + c.age + '  children ' + c.children, sy);
+    sy = rowSmall('species', '#' + c.species + (spState ? '  ' + spState : '') + (spRec ? '  peak ' + spRec.peak : ''), sy);
+    sy = rowSmall('position', c.x.toFixed(0) + ', ' + c.y.toFixed(0) + '  v ' + Math.sqrt(c.vx * c.vx + c.vy * c.vy).toFixed(2), sy);
+
+    sy = meter('ATP', Math.max(0, c.energy), 0, c.threshold || 1, sy, 120);
+    sy = meter('nutrient', c.nutrient || 0, 0, c.gutCap || 1, sy, 45);
+    sy = meter('biomass', c.biomass || 0, 0, c.targetMass || 1, sy, 200);
+    sy = rowSmall('body', 'cells ' + (c.cells || 0) + '  mature ' + (c.biomass >= c.matureBiomass ? 'yes' : (100 * c.biomass / (c.targetMass || 1)).toFixed(0) + '%') +
+      '  target ' + (c.targetMass || 0).toFixed(2), sy);
+
+    if (c.tissues) {
+      sy = rowSmall('tissues', 'gut ' + c.tissues[0].toFixed(2) + '  mus ' + c.tissues[1].toFixed(2) +
+        '  ner ' + c.tissues[2].toFixed(2) + '  gon ' + c.tissues[3].toFixed(2), sy);
+    }
+    if (c.genes) {
+      sy = rowSmall('development', 'alloc g' + (c.genes.allocGut || 0).toFixed(2) + ' m' + (c.genes.allocMuscle || 0).toFixed(2) +
+        ' n' + (c.genes.allocNerve || 0).toFixed(2) + ' o' + (c.genes.allocGonad || 0).toFixed(2) +
+        '  timing ' + (c.genes.devTiming || 0).toFixed(2), sy);
+    }
+
+    if (c.traits && c.genes) {
+      sy = rowSmall('speed', c.traits.speedMax.toFixed(2) + ' realized  /  ' + c.genes.speedMax.toFixed(2) + ' gene', sy);
+      sy = rowSmall('sense', c.traits.sense.toFixed(0) + ' realized  /  ' + c.genes.sense.toFixed(0) + ' gene', sy);
+      sy = rowSmall('enzyme', c.traits.enzyme.toFixed(2) + ' realized  /  ' + c.genes.enzyme.toFixed(2) + ' gene', sy);
+      sy = rowSmall('mut / repro', c.traits.mutRate.toFixed(2) + ' / ' + c.traits.reproE.toFixed(0) +
+        '  (genes ' + c.genes.mutRate.toFixed(2) + ' / ' + c.genes.reproE.toFixed(0) + ')', sy);
+    }
+    sy = rowSmall('behavior', 'eaten ' + c.eaten + '  kills ' + c.kills + '  reg ' + regAvg.toFixed(2) +
+      (c.matedTick === world.tick ? '  mated' : ''), sy);
   } else {
     fill(0, 0, 38);
     textSize(10);
     text('click a creature to inspect it', 18, y + 24);
+    textSize(9);
+    fill(0, 0, 30);
+    text('open Species catalog for lineage history', 18, y + 40);
   }
 
   pop();
@@ -303,7 +334,8 @@ function section(name, y, right) {
   return y + 22;
 }
 
-function row(name, value, y) {
+function row(name, value, y, step) {
+  const dy = step || 17;
   textSize(10);
   textAlign(LEFT);
   fill(0, 0, 50);
@@ -312,7 +344,37 @@ function row(name, value, y) {
   textAlign(RIGHT);
   text(value, PANEL - 18, y);
   textAlign(LEFT);
-  return y + 18;
+  return y + dy;
+}
+
+function rowSmall(name, value, y) {
+  textSize(9);
+  textAlign(LEFT);
+  fill(0, 0, 44);
+  text(name, 18, y);
+  fill(0, 0, 84);
+  textAlign(RIGHT);
+  text(value, PANEL - 18, y);
+  textAlign(LEFT);
+  return y + 14;
+}
+
+function meter(name, v, lo, hi, y, hue) {
+  textSize(9);
+  textAlign(LEFT);
+  fill(0, 0, 48);
+  text(name, 18, y);
+  fill(0, 0, 88);
+  textAlign(RIGHT);
+  text(v < 10 ? v.toFixed(2) : v.toFixed(0), PANEL - 18, y);
+  textAlign(LEFT);
+  const f = clamp01((v - lo) / (hi - lo));
+  noStroke();
+  fill(226, 20, 20);
+  rect(18, y + 4, PANEL - 36, 3, 2);
+  fill(hue, 55, 82, 80);
+  rect(18, y + 4, (PANEL - 36) * f, 3, 2);
+  return y + 17;
 }
 
 function bar(name, v, lo, hi, y, hue) {
@@ -470,9 +532,14 @@ function setupUI() {
   if (!$('btn-pause')) return;
 
   $('btn-pause').onclick = () => { paused = !paused; syncUI(); };
-  document.querySelectorAll('[data-speed]').forEach((b) => {
-    b.onclick = () => { stepsPerFrame = +b.dataset.speed; paused = false; syncUI(); };
-  });
+  const speed = $('speed');
+  if (speed) {
+    speed.oninput = () => {
+      stepsPerFrame = Math.max(1, Math.min(128, +speed.value || 1));
+      paused = false;
+      syncUI();
+    };
+  }
   $('btn-reset').onclick = () => resetWorld();
   $('btn-share').onclick = shareLink;
   $('btn-save').onclick = saveRun;
@@ -493,6 +560,18 @@ function setupUI() {
     flash('reproduction: ' + (world.p.sexual ? 'sexual' : 'asexual'));
     syncUI();
   };
+  if ($('btn-species')) {
+    $('btn-species').onclick = () => {
+      showSpeciesCatalog = !showSpeciesCatalog;
+      const panel = $('species-panel');
+      if (panel) {
+        panel.classList.toggle('open', showSpeciesCatalog);
+        panel.setAttribute('aria-hidden', showSpeciesCatalog ? 'false' : 'true');
+      }
+      if (showSpeciesCatalog) renderSpeciesCatalog();
+      syncUI();
+    };
+  }
   $('seed-label').onclick = shareLink;
 }
 
@@ -501,16 +580,84 @@ function syncUI() {
   if (!$('btn-pause')) return;
 
   $('btn-pause').textContent = paused ? 'resume' : 'pause';
-  document.querySelectorAll('[data-speed]').forEach((b) => {
-    b.classList.toggle('on', !paused && +b.dataset.speed === stepsPerFrame);
-  });
+  $('btn-pause').classList.toggle('on', paused);
+  const speed = $('speed');
+  const speedValue = $('speed-value');
+  if (speed) speed.value = String(Math.max(1, Math.min(128, Math.round(stepsPerFrame))));
+  if (speedValue) speedValue.textContent = Math.round(stepsPerFrame) + '\u00d7';
   $('btn-predation').textContent = 'predation: ' + (world.p.predation ? 'on' : 'off');
   $('btn-predation').classList.toggle('on', world.p.predation);
   $('btn-color').textContent = 'colour: ' + colorBy;
   $('btn-color').classList.toggle('on', colorBy === 'species');
   $('btn-sexual').textContent = 'sexual: ' + (world.p.sexual ? 'on' : 'off');
   $('btn-sexual').classList.toggle('on', world.p.sexual);
+  if ($('btn-species')) $('btn-species').classList.toggle('on', showSpeciesCatalog);
   $('seed-label').textContent = 'seed ' + world.seed;
+}
+
+function renderSpeciesCatalog() {
+  const list = document.getElementById('species-list');
+  const title = document.getElementById('species-title');
+  if (!list || !world) return;
+  const all = (world.allSpecies || []).slice().sort((a, b) => {
+    const da = a.count > 0 ? 0 : 1;
+    const db = b.count > 0 ? 0 : 1;
+    if (da !== db) return da - db;
+    if (b.peak !== a.peak) return b.peak - a.peak;
+    return a.id - b.id;
+  });
+  const alive = all.filter((s) => s.count > 0).length;
+  if (title) title.textContent = 'Species catalog \u2014 ' + alive + ' alive / ' + all.length + ' total';
+  list.textContent = '';
+  if (!all.length) {
+    const empty = document.createElement('div');
+    empty.className = 'species-card';
+    empty.textContent = 'No species data yet.';
+    list.appendChild(empty);
+    return;
+  }
+  for (let i = 0; i < all.length; i++) {
+    const sp = all[i];
+    const tr = world.speciesTraits ? world.speciesTraits(sp) : {};
+    const card = document.createElement('div');
+    card.className = 'species-card' + (sp.count > 0 ? ' alive' : '');
+
+    const head = document.createElement('div');
+    head.className = 'species-head';
+    const swatch = document.createElement('span');
+    swatch.className = 'swatch';
+    swatch.style.background = 'hsl(' + ((sp.hue * 360) | 0) + ' 65% 62%)';
+    const id = document.createElement('span');
+    id.className = 'species-id';
+    id.textContent = 'Species #' + sp.id;
+    const state = document.createElement('span');
+    state.className = 'species-state' + (sp.count > 0 ? ' on' : '');
+    state.textContent = sp.count > 0 ? sp.count + ' alive' : 'extinct';
+    head.append(swatch, id, state);
+
+    const traits = document.createElement('div');
+    traits.className = 'species-traits';
+    const items = [
+      ['peak', String(sp.peak || 0)],
+      ['first/last', (sp.firstSeen || 0) + '/' + (sp.lastSeen || 0)],
+      ['size', tr.size != null ? tr.size.toFixed(2) : '-'],
+      ['speed', tr.speedMax != null ? tr.speedMax.toFixed(2) : '-'],
+      ['sense', tr.sense != null ? tr.sense.toFixed(0) : '-'],
+      ['enzyme', tr.enzyme != null ? tr.enzyme.toFixed(2) : '-'],
+      ['mutRate', tr.mutRate != null ? tr.mutRate.toFixed(2) : '-'],
+      ['reproE', tr.reproE != null ? tr.reproE.toFixed(0) : '-'],
+    ];
+    for (let j = 0; j < items.length; j++) {
+      const s = document.createElement('span');
+      const b = document.createElement('b');
+      b.textContent = items[j][1];
+      s.textContent = items[j][0] + ' ';
+      s.appendChild(b);
+      traits.appendChild(s);
+    }
+    card.append(head, traits);
+    list.appendChild(card);
+  }
 }
 
 function shareLink() {
@@ -554,8 +701,10 @@ function loadRun(e) {
       foodHist = [];
       speciesHist = [];
       sampleClock = 0;
+      catalogClock = 0;
       paused = false;
       syncUI();
+      renderSpeciesCatalog();
       flash('loaded seed ' + next.seed);
     } catch (err) {
       console.error(err);

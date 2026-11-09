@@ -64,18 +64,21 @@ The toolbar exposes everything; the keys are shortcuts.
 | Key | Action |
 |:---:|:---|
 | <kbd>space</kbd> | Pause / resume |
-| <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd> | 1×, 4×, 16×, 64× simulation speed |
+| <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd> | Speed presets (also a fine speed slider in the toolbar) |
 | <kbd>r</kbd> | Reset with a fresh random world |
 | <kbd>p</kbd> | Toggle predation |
 | <kbd>c</kbd> | Colour by genes or by species |
 | <kbd>s</kbd> | Toggle sexual / asexual reproduction |
 | <kbd>d</kbd> | Download the whole world as JSON |
 | <kbd>l</kbd> | Load a saved world |
-| <kbd>click</kbd> | Inspect a creature: ATP, body plan, tissue allocation, genes |
+| <kbd>catalog</kbd> | Open the species catalog: every species that ever existed, alive/extinct status, peak, lifespan, and trait profile |
+| <kbd>click</kbd> | Inspect a creature: identity, ATP/nutrient/biomass, cells, tissues, development, realized vs. gene traits, regulation, behavior |
 
 The panel on the right shows world totals, mean realised traits, a stacked
-population graph split by species, and the selected creature. Tissue fractions
-are drawn as four coloured arcs around each body: gut, muscle, nerve, gonad.
+population graph split by species, and a detailed inspector for the selected
+creature. The species catalog lists every species that has ever existed with its
+status, lifespan, peak, and trait profile. Tissue fractions are drawn as four
+coloured arcs around each body: gut, muscle, nerve, gonad.
 
 Creature colour comes from its `hue` gene (neutral, so it drifts into lineages).
 Brightness is current ATP relative to its reproduction threshold — starving
@@ -86,7 +89,7 @@ creatures dim out. Switch to **colour: species** to see the clustering instead.
 | Parameter | Meaning |
 |:---|:---|
 | `seed` | Reproduce a run exactly |
-| `speed` | `1`, `4`, `16`, or `64` steps per frame |
+| `speed` | `1`–`128` simulation steps per frame |
 | `color` | `species` to start in species colour mode |
 | `sexual` | `0` or `1` to force reproduction mode |
 | `predation` | `0` to disable predation |
