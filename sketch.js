@@ -173,12 +173,14 @@ function hash01(a, b, c) {
   return ((x >>> 0) % 10000) / 10000;
 }
 
-function drawFoodItem(f) {
+function drawFoodItem(f, px, py) {
+  const x = px == null ? f.x : px;
+  const y = py == null ? f.y : py;
   const h1 = hash01((f.x * 10) | 0, (f.y * 10) | 0, 1);
   const h2 = hash01((f.x * 10) | 0, (f.y * 10) | 0, 2);
   const h3 = hash01((f.x * 10) | 0, (f.y * 10) | 0, 3);
   push();
-  translate(f.x, f.y);
+  translate(x, y);
   rotate(h1 * TAU);
   const kind = (h2 * 4) | 0;
   const r = 1.7 + h3 * 1.4;
@@ -211,7 +213,9 @@ function drawFoodItem(f) {
   pop();
 }
 
-function drawCreatureModel(c) {
+function drawCreatureModel(c, px, py) {
+  const x = px == null ? c.x : px;
+  const y = py == null ? c.y : py;
   const hue = (colorBy === 'species' ? c.speciesHue : c.genes.hue) * 360;
   const e = clamp01(c.energy / c.threshold);
   const t = c.tissues || [0.25, 0.25, 0.25, 0.25];
@@ -226,7 +230,7 @@ function drawCreatureModel(c) {
   const bri = 48 + 44 * e;
 
   push();
-  translate(c.x, c.y);
+  translate(x, y);
   rotate(c.heading);
 
   // tail / propulsion (muscle, speed)
@@ -312,7 +316,7 @@ function drawCreatureModel(c) {
       const span = t[k] * TAU;
       if (span > 0.08) {
         stroke(tissueHue[k], 45, 75, 35);
-        arc(c.x, c.y, rr * 2, rr * 2, a + 0.04, a + span - 0.04);
+        arc(x, y, rr * 2, rr * 2, a + 0.04, a + span - 0.04);
       }
       a += span;
     }
@@ -321,45 +325,69 @@ function drawCreatureModel(c) {
 }
 
 function drawWorld() {
+  const focused = !!(focusCreatureId || focusSpeciesId);
+  const wx = (o) => focused ? camX + wrapDeltaLocal(o.x - camX, W) : o.x;
+  const wy = (o) => focused ? camY + wrapDeltaLocal(o.y - camY, H) : o.y;
+
   noStroke();
   fill(226, 30, 10);
-  rect(0, 0, W, H, 10);
-
-  noFill();
-  stroke(226, 16, 20);
-  strokeWeight(1);
-  rect(0.5, 0.5, W - 1, H - 1, 10);
-  noStroke();
+  if (focused) {
+    // tiled background for seamless toroidal camera
+    rect(camX - W * 2, camY - H * 2, W * 4, H * 4);
+  } else {
+    rect(0, 0, W, H, 10);
+    noFill();
+    stroke(226, 16, 20);
+    strokeWeight(1);
+    rect(0.5, 0.5, W - 1, H - 1, 10);
+    noStroke();
+  }
 
   // food — varied procedural models
-  for (let i = 0; i < world.food.length; i++) drawFoodItem(world.food[i]);
+  for (let i = 0; i < world.food.length; i++) {
+    const f = world.food[i];
+    drawFoodItem(f, wx(f), wy(f));
+  }
 
   // creatures — procedural models driven by genes and tissues
-  for (let i = 0; i < world.creatures.length; i++) drawCreatureModel(world.creatures[i]);
+  for (let i = 0; i < world.creatures.length; i++) {
+    const c = world.creatures[i];
+    drawCreatureModel(c, wx(c), wy(c));
+  }
 
   if (selected) {
+    const sx = wx(selected), sy = wy(selected);
     noFill();
     stroke(0, 0, 100, 85);
     strokeWeight(1.5);
-    circle(selected.x, selected.y, selected.radius * 2 + 10);
+    circle(sx, sy, selected.radius * 2 + 10);
     stroke(0, 0, 100, 18);
     strokeWeight(1);
-    circle(selected.x, selected.y, selected.traits.sense * 2);
+    circle(sx, sy, selected.traits.sense * 2);
     stroke(140, 55, 95, 55);
     const r = selected.radius;
-    line(selected.x, selected.y, selected.x + Math.cos(selected.heading) * r * 2.8, selected.y + Math.sin(selected.heading) * r * 2.8);
+    line(sx, sy, sx + Math.cos(selected.heading) * r * 2.8, sy + Math.sin(selected.heading) * r * 2.8);
     noStroke();
   }
 
   if (flashMsg && millis() < flashUntil) {
     textAlign(CENTER);
     textSize(12);
-    const tw = textWidth(flashMsg) + 26;
-    noStroke();
-    fill(226, 40, 8, 82);
-    rect(W / 2 - tw / 2, H - 46, tw, 28, 14);
-    fill(0, 0, 96);
-    text(flashMsg, W / 2, H - 27);
+    if (focused) {
+      const tw = textWidth(flashMsg) + 26;
+      noStroke();
+      fill(226, 40, 8, 82);
+      rect(camX - tw / 2, camY + 70, tw, 28, 14);
+      fill(0, 0, 96);
+      text(flashMsg, camX, camY + 89);
+    } else {
+      const tw = textWidth(flashMsg) + 26;
+      noStroke();
+      fill(226, 40, 8, 82);
+      rect(W / 2 - tw / 2, H - 46, tw, 28, 14);
+      fill(0, 0, 96);
+      text(flashMsg, W / 2, H - 27);
+    }
     textAlign(LEFT);
   }
 }
