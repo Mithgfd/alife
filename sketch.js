@@ -103,7 +103,19 @@ function draw() {
     }
   }
 
-  if (selected && (selected.dead || selected.energy <= 0)) { selected = null; focusCreatureId = 0; }
+  if (selected && (selected.dead || selected.energy <= 0)) {
+    const nx = selected.x, ny = selected.y;
+    const next = findNearestCreature(nx, ny, selected.id);
+    selected = next;
+    if (next) focusOnCreature(next.id);
+    else focusCreatureId = 0;
+  } else if (focusCreatureId && !selected) {
+    // focused creature disappeared; pick nearest to current camera
+    const next = findNearestCreature(camX, camY, focusCreatureId);
+    selected = next;
+    if (next) focusOnCreature(next.id);
+    else focusCreatureId = 0;
+  }
 
   background(worldOnly ? color(226, 28, 8) : color(226, 24, 7));
   const vt = getWorldTransform();
@@ -781,6 +793,27 @@ function updateCameraFocus() {
   } else {
     camZ = focusCreatureId ? 3.0 : 2.6;
   }
+}
+
+function wrapDeltaLocal(d, m) {
+  if (d > m / 2) d -= m;
+  else if (d < -m / 2) d += m;
+  return d;
+}
+
+function findNearestCreature(x, y, excludeId) {
+  if (!world || !world.creatures || !world.creatures.length) return null;
+  let best = null, bestD = Infinity;
+  for (let i = 0; i < world.creatures.length; i++) {
+    const c = world.creatures[i];
+    if (!c || c.dead || c.energy <= 0) continue;
+    if (excludeId && c.id === excludeId) continue;
+    const dx = wrapDeltaLocal(c.x - x, W);
+    const dy = wrapDeltaLocal(c.y - y, H);
+    const d = dx * dx + dy * dy;
+    if (d < bestD) { bestD = d; best = c; }
+  }
+  return best;
 }
 
 function getWorldTransform() {
