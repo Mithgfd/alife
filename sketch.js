@@ -560,18 +560,18 @@ function setupUI() {
     flash('reproduction: ' + (world.p.sexual ? 'sexual' : 'asexual'));
     syncUI();
   };
-  if ($('btn-species')) {
-    $('btn-species').onclick = () => {
-      showSpeciesCatalog = !showSpeciesCatalog;
-      const panel = $('species-panel');
-      if (panel) {
-        panel.classList.toggle('open', showSpeciesCatalog);
-        panel.setAttribute('aria-hidden', showSpeciesCatalog ? 'false' : 'true');
-      }
-      if (showSpeciesCatalog) renderSpeciesCatalog();
-      syncUI();
-    };
-  }
+  const toggleSpecies = () => {
+    showSpeciesCatalog = !showSpeciesCatalog;
+    const panel = $('species-panel');
+    if (panel) {
+      panel.classList.toggle('open', showSpeciesCatalog);
+      panel.setAttribute('aria-hidden', showSpeciesCatalog ? 'false' : 'true');
+    }
+    if (showSpeciesCatalog) renderSpeciesCatalog();
+    syncUI();
+  };
+  if ($('btn-species')) $('btn-species').onclick = toggleSpecies;
+  if ($('btn-species-fab')) $('btn-species-fab').onclick = toggleSpecies;
   $('seed-label').onclick = shareLink;
 }
 
@@ -592,6 +592,7 @@ function syncUI() {
   $('btn-sexual').textContent = 'sexual: ' + (world.p.sexual ? 'on' : 'off');
   $('btn-sexual').classList.toggle('on', world.p.sexual);
   if ($('btn-species')) $('btn-species').classList.toggle('on', showSpeciesCatalog);
+  if ($('btn-species-fab')) $('btn-species-fab').classList.toggle('on', showSpeciesCatalog);
   $('seed-label').textContent = 'seed ' + world.seed;
 }
 
