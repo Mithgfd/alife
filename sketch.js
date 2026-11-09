@@ -184,8 +184,21 @@ function drawFoodItem(f, px, py) {
   rotate(h1 * TAU);
   const kind = (h2 * 4) | 0;
   const r = 1.7 + h3 * 1.4;
+  const fauna = f && f.type;
   noStroke();
-  if (kind === 0) {
+  if (fauna) {
+    // richer resource: warmer/protein-like
+    fill(18 + h1 * 18, 55 + h2 * 20, 62, 52);
+    if (kind < 2) {
+      ellipse(0, 0, r * 2.0, r * 1.5);
+      fill(35, 40, 78, 40);
+      circle(r * 0.15, -r * 0.1, r * 0.8);
+    } else {
+      circle(0, 0, r * 2.1);
+      fill(8, 60, 55, 35);
+      circle(-r * 0.2, r * 0.1, r * 0.9);
+    }
+  } else if (kind === 0) {
     fill(105 + h1 * 30, 45, 52, 45);
     ellipse(0, 0, r * 2.2, r * 1.4);
   } else if (kind === 1) {

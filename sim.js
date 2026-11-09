@@ -17,6 +17,17 @@
     return d;
   }
 
+  // Deterministic habitat fields (no RNG). Returns fertility/hazard ~0..1.
+  function habitatAt(x, y, p, hs) {
+    const s = p.habitatScale || 0.009;
+    const a = Math.sin((x + hs * 0.13) * s) * Math.cos((y - hs * 0.07) * s * 1.3);
+    const b = Math.cos((x * 0.7 - y * 0.9 + hs * 0.21) * s * 0.73);
+    const v = (a + b) * 0.5; // ~ -1..1
+    const fert = clamp(0.5 + v * (p.habitatStrength || 0.55), 0.05, 1);
+    const hazard = clamp(0.5 - v * (p.hazardStrength || 0.30), 0, 1);
+    return { fertility: fert, hazard: hazard };
+  }
+
   // ---------------------------------------------------------------- random --
   // One RNG per World, so a seed fully determines a run and two worlds can
   // exist side by side without stealing each other's random numbers.
@@ -66,9 +77,27 @@
   }
 
   // ---------------------------------------------------------------- genome --
-  // 8 inputs -> 6 tanh hidden -> 2 outputs. 68 weights.
-  const IN = 8, HID = 6, OUT = 2;
+  // 12 inputs -> 6 tanh hidden -> 2 outputs. 92 weights.
+  // Inputs are egocentric/local: food vec+prox+type, creature vec, energy,
+  // speed, gut fill, local fertility, local hazard, age/condition.
+  const IN = 12, HID = 6, OUT = 2;
   const NW = IN * HID + HID + HID * OUT + OUT;
+  const OLD_IN = 8, OLD_NW = OLD_IN * HID + HID + HID * OUT + OUT;
+
+  function migrateWeights(oldW) {
+    const src = oldW && oldW.length === OLD_NW ? oldW : null;
+    const w = new Float32Array(NW);
+    if (!src) return w;
+    for (let j = 0; j < HID; j++) {
+      for (let i = 0; i < OLD_IN; i++) w[j * IN + i] = +src[j * OLD_IN + i] || 0;
+    }
+    for (let j = 0; j < HID; j++) w[IN * HID + j] = +src[OLD_IN * HID + j] || 0;
+    const hbOld = OLD_IN * HID + HID, hbNew = IN * HID + HID;
+    for (let o = 0; o < OUT; o++) for (let j = 0; j < HID; j++) w[hbNew + o * HID + j] = +src[hbOld + o * HID + j] || 0;
+    const obOld = hbOld + HID * OUT, obNew = hbNew + HID * OUT;
+    for (let o = 0; o < OUT; o++) w[obNew + o] = +src[obOld + o] || 0;
+    return w;
+  }
 
   // Each gene is a scalar with a hard range. `sigma` is the mutation step at
   // the reference mutation rate (0.15); actual step scales with the creature's
@@ -249,11 +278,13 @@
     width: 900,
     height: 700,
 
-    // Food is the only resource. Growth is logistic toward foodCap, so a
-    // stripped world regrows fast and a full world stops producing.
+    // Two resource types create dietary niches. `flora` (type 0) is common;
+    // `fauna` (type 1) is richer but rarer and harder to digest without enzyme.
     foodCap: 450,
     foodGrowth: 1.8,
     foodEnergy: 28,
+    foodEnergyFauna: 42,
+    faunaChance: 0.18,
     foodRadius: 2.2,
     seedFood: 0.7,
 
@@ -262,6 +293,15 @@
     patchCount: 5,
     patchSpread: 120,
     patchBias: 0.7,
+
+    // Habitat: deterministic spatial fertility/hazard fields (sampled by x,y).
+    // Fertility boosts local regrowth and flora quality; hazard adds stress.
+    habitatScale: 0.009,
+    habitatStrength: 0.55,
+    hazardStrength: 0.30,
+    hazardCost: 0.025,      // extra ATP drain per hazard * mass^0.75
+    senescenceAge: 3000,
+    senescenceCost: 0.015,  // extra basal drain fraction over senescence age
 
     startPop: 70,
     maxPop: 600,          // hard CPU / stability ceiling
@@ -287,14 +327,16 @@
     senseDrive: 0.35,     // movement drive when a creature is sensed but no food is
     thresholdBase: 30,
 
-    // Digestion: food is nutrient, not usable energy. The enzyme gene sets the
-    // catalyst level; nutrient is converted to ATP (usable energy) and biomass
-    // (body material) at a Michaelis-Menten rate. Growing biomass costs ATP, so
-    // growth and reproduction compete for the same budget.
+    // Digestion: nutrient -> ATP + biomass (Michaelis-Menten). Food type
+    // modifies yields/digestibility: fauna is richer but needs higher enzyme.
     digestRate: 5.0,      // max nutrient processed per tick at enzyme = 1
     digestKm: 12,         // nutrient level at half-maximal digestion
-    atpYield: 1.0,        // ATP per nutrient
-    biomassYield: 0.030,  // biomass per nutrient
+    atpYield: 1.0,        // ATP per nutrient (flora)
+    biomassYield: 0.030,  // biomass per nutrient (flora)
+    faunaAtpYield: 1.12,
+    faunaBiomassYield: 0.042,
+    faunaDigestBase: 0.55,
+    faunaDigestEnzyme: 0.45, // digestibility = base + enzymeScale*clamp(enzyme/2,0,1)
     growthCost: 5.0,      // ATP spent per biomass synthesized
     catabolism: 3.0,      // ATP released per biomass burned while starving
     gutBase: 18,          // gut capacity = gutBase + gutSize * size
@@ -390,6 +432,7 @@
         ? (opts.seed >>> 0)
         : ((Math.random() * 4294967296) >>> 0);
       this.rng = new Rng(this.seed);
+      this.habitatSeed = (this.seed ^ 0x5bf03635) >>> 0;
 
       this.nextSpeciesId = 1;
       this.species = [];
@@ -448,14 +491,18 @@
       // foraging drive and sprint cost reinforce waiting/cruising over
       // constant fast movement. These weights are ordinary genes.
       const jitter = () => 0.6 + this.rng.next() * 0.8;
+      const hb = IN * HID, ho = IN * HID + HID, ob = IN * HID + HID + HID * OUT;
+      // hid 0: steer toward food
       w[0 * IN + 1] = 1.5 * jitter();          // food right -> hid 0
-      w[48 + 0] = 0;
-      w[54 + 0] = 1.8 * jitter();              // hid 0 -> turn
+      w[hb + 0] = 0;
+      w[ho + 0 * HID + 0] = 1.8 * jitter();    // hid 0 -> turn
+      // hid 1: thrust from food ahead/proximity; rest when idle
       w[1 * IN + 0] = 1.8 * jitter();          // food ahead -> hid 1
       w[1 * IN + 2] = 1.4 * jitter();          // food proximity -> hid 1
-      w[48 + 1] = 0;
-      w[54 + HID + 1] = 1.6 * jitter();        // hid 1 -> thrust
-      w[IN * HID + HID + HID * OUT + 1] = -0.2; // thrust bias (rest when idle)
+      w[1 * IN + 8] = 0.6 * jitter();          // gut not full / can eat -> hid 1 (input 8)
+      w[hb + 1] = 0;
+      w[ho + 1 * HID + 1] = 1.6 * jitter();    // hid 1 -> thrust
+      w[ob + 1] = -0.25;                       // thrust bias (rest when idle)
       genes.rg = randomRg(this.rng);
       return { genes, w };
     }
@@ -587,6 +634,7 @@
         speciesHue: 0,
         matedTick: -1,
         nutrient: 0,
+        diet: 0, // EMA of food type eaten: 0 flora, 1 fauna
         biomass: targetMass,
         gutCap: p.gutBase + p.gutSize * genes.size,
         reg: new Float32Array(REG_N),
@@ -683,7 +731,12 @@
         x = this.rng.next() * this.w;
         y = this.rng.next() * this.h;
       }
-      this.food.push({ x, y, e: p.foodEnergy, dead: false });
+      const hab = habitatAt(x, y, p, this.habitatSeed);
+      const faunaP = clamp((p.faunaChance || 0) * (0.65 + 0.7 * hab.fertility), 0, 0.6);
+      const type = this.rng.next() < faunaP ? 1 : 0;
+      const eBase = type ? (p.foodEnergyFauna != null ? p.foodEnergyFauna : p.foodEnergy * 1.5) : p.foodEnergy;
+      const qual = type ? (0.85 + 0.3 * hab.fertility) : (0.7 + 0.6 * hab.fertility);
+      this.food.push({ x, y, e: eBase * qual, type, dead: false });
     }
 
     // --------------------------------------------------------------- species --
@@ -1003,6 +1056,8 @@
       // x/y. That makes "turn toward food" a single positive weight, which
       // evolution can actually find. World-frame inputs make it a moving
       // target the network has no heading to solve.
+      const hab = habitatAt(c.x, c.y, p, this.habitatSeed);
+      const fType = bestF ? (bestF.type | 0) : 0;
       const ch = Math.cos(c.heading), sh = Math.sin(c.heading);
       const inp = this._in;
       inp[0] = (fx * ch + fy * sh);          // food, forward
@@ -1011,8 +1066,12 @@
       inp[3] = (ox * ch + oy * sh);          // creature, forward
       inp[4] = (-ox * sh + oy * ch);         // creature, right
       inp[5] = clamp(c.energy / c.threshold, 0, 1.6) * 0.75;
-      inp[6] = clamp(Math.sqrt(c.vx * c.vx + c.vy * c.vy) / c.traits.speedMax, 0, 1);
-      inp[7] = 1;
+      inp[6] = clamp(Math.sqrt(c.vx * c.vx + c.vy * c.vy) / (c.traits.speedMax || 1), 0, 1);
+      inp[7] = 1;                            // bias
+      inp[8] = clamp(c.nutrient / (c.gutCap || 1), 0, 1);
+      inp[9] = hab.fertility;
+      inp[10] = hab.hazard;
+      inp[11] = bestF ? fType : 0;
 
       const w = c.w;
       const hid = this._hid;
@@ -1050,7 +1109,10 @@
       const spd = Math.sqrt(v2);
       const sprint = c.traits.speedMax > 1e-6 ? clamp(spd / c.traits.speedMax, 0, 1) : 0;
       const sprintCost = p.sprintCost != null ? p.sprintCost : 2.5;
-      c.energy -= p.basal + p.basalMass * c.mass + p.moveCost * c.mass075 * v2 * (1 + sprintCost * sprint * sprint);
+      const senAge = p.senescenceAge || 3000;
+      const sen = c.age > senAge ? (c.age - senAge) / senAge * (p.senescenceCost || 0) : 0;
+      const hazardDrain = (p.hazardCost || 0) * (hab ? hab.hazard : 0) * c.mass075;
+      c.energy -= p.basal * (1 + sen) + p.basalMass * c.mass + p.moveCost * c.mass075 * v2 * (1 + sprintCost * sprint * sprint) + hazardDrain;
 
       // ---- eat (one item per tick, nearest first) ----
       // Food is nutrient, not usable energy. A full gut means the creature
@@ -1070,6 +1132,7 @@
         if (meal) {
           meal.dead = true;
           c.nutrient = Math.min(c.gutCap, c.nutrient + meal.e);
+          c.diet = (c.diet || 0) * 0.72 + ((meal.type | 0) ? 1 : 0) * 0.28;
           c.eaten++;
         }
       }
@@ -1079,13 +1142,18 @@
       // nutrient becomes ATP and biomass. Growth is paid for in ATP, so body
       // size and reproduction compete for the same budget.
       if (c.nutrient > 0) {
-        const flux = p.digestRate * c.traits.enzyme * c.nutrient / (c.nutrient + p.digestKm);
+        const diet = clamp(c.diet || 0, 0, 1);
+        const faunaDig = (p.faunaDigestBase != null ? p.faunaDigestBase : 0.55) + (p.faunaDigestEnzyme != null ? p.faunaDigestEnzyme : 0.45) * clamp(c.traits.enzyme / 2, 0, 1);
+        const dig = 1 * (1 - diet) + faunaDig * diet;
+        const atpY = (p.atpYield != null ? p.atpYield : 1) * (1 - diet) + (p.faunaAtpYield != null ? p.faunaAtpYield : 1.12) * diet;
+        const bioY = (p.biomassYield != null ? p.biomassYield : 0.03) * (1 - diet) + (p.faunaBiomassYield != null ? p.faunaBiomassYield : 0.042) * diet;
+        const flux = p.digestRate * c.traits.enzyme * dig * c.nutrient / (c.nutrient + p.digestKm);
         const used = Math.min(flux, c.nutrient);
         c.nutrient -= used;
-        c.energy += used * p.atpYield;
+        c.energy += used * atpY;
 
         if (c.biomass < c.targetMass) {
-          const biomassGain = used * p.biomassYield;
+          const biomassGain = used * bioY;
           const affordable = Math.max(0, c.energy) / p.growthCost;
           const grow = Math.min(biomassGain, c.targetMass - c.biomass, affordable);
           if (grow > 0) {
@@ -1129,8 +1197,9 @@
     // ------------------------------------------------------------ serialize --
     serialize() {
       return {
-        version: 5,
+        version: 6,
         seed: this.seed,
+        habitatSeed: this.habitatSeed >>> 0,
         rng: this.rng.state >>> 0,
         // Rng.normal() keeps one sample in reserve; without it a resumed run
         // draws a different sequence than the saved one.
@@ -1148,7 +1217,7 @@
         asexualBirths: this.asexualBirths,
         params: this.p,
         patches: this.patches.map((q) => ({ x: q.x, y: q.y, vx: q.vx, vy: q.vy })),
-        food: this.food.map((f) => ({ x: f.x, y: f.y, e: f.e })),
+        food: this.food.map((f) => ({ x: f.x, y: f.y, e: f.e, type: f.type | 0 })),
         species: this.species.map((sp) => ({
           id: sp.id,
           hue: sp.hue,
@@ -1176,6 +1245,7 @@
           vx: c.vx, vy: c.vy,
           energy: c.energy,
           nutrient: c.nutrient,
+          diet: +c.diet || 0,
           biomass: c.biomass,
           eaten: c.eaten,
           kills: c.kills,
@@ -1191,7 +1261,7 @@
     }
 
     static fromJSON(obj) {
-      if (!obj || (obj.version !== 1 && obj.version !== 2 && obj.version !== 3 && obj.version !== 4 && obj.version !== 5)) {
+      if (!obj || (obj.version !== 1 && obj.version !== 2 && obj.version !== 3 && obj.version !== 4 && obj.version !== 5 && obj.version !== 6)) {
         throw new Error('Unsupported save file');
       }
       const params = Object.assign({}, obj.params || {});
@@ -1218,23 +1288,28 @@
         ? obj.rngSpare
         : null;
 
+      if (obj.habitatSeed != null) w.habitatSeed = obj.habitatSeed >>> 0;
       w.patches = (obj.patches || []).map((q) => ({
         x: +q.x, y: +q.y, vx: +q.vx || 0, vy: +q.vy || 0,
       }));
       w.food = (obj.food || []).map((f) => ({
-        x: +f.x, y: +f.y, e: +f.e, dead: false,
+        x: +f.x, y: +f.y, e: +f.e, type: f.type | 0, dead: false,
       }));
       w.creatures = (obj.creatures || []).map((c) => {
-        if (!c.genes || !Array.isArray(c.w) || c.w.length !== NW) {
+        if (!c.genes || !Array.isArray(c.w)) {
           throw new Error('Invalid creature in save file');
         }
+        let weights;
+        if (c.w.length === NW) weights = Float32Array.from(c.w);
+        else if (c.w.length === OLD_NW) weights = migrateWeights(c.w);
+        else throw new Error('Invalid creature in save file');
         // v1/v2 saves have no regulatory genome or state; normalizing fills
         // zeros, which express the structural genes unchanged. v1-v3 saves
         // also predate developmental allocation, so those loci default to an
         // even body plan.
         normalizeGenes(c.genes);
         c.genes.rg = normalizeRg(c.genes.rg);
-        const cr = w.makeCreature(c.genes, Float32Array.from(c.w), c.gen | 0,
+        const cr = w.makeCreature(c.genes, weights, c.gen | 0,
           +c.x, +c.y, +c.heading);
         cr.id = c.id | 0;
         cr.vx = +c.vx || 0;
@@ -1246,6 +1321,7 @@
         cr.age = c.age | 0;
         cr.species = c.species | 0;
         cr.speciesHue = +c.speciesHue || 0;
+        cr.diet = Number.isFinite(c.diet) ? clamp(+c.diet, 0, 1) : 0;
         // v1 saves predate the metabolism layer; treat their creatures as
         // adults with an empty gut.
         w.setBiomass(cr, Number.isFinite(c.biomass) ? c.biomass : cr.targetMass);
