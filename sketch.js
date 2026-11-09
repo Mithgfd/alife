@@ -28,6 +28,7 @@ let speciesSort = 'id';
 let showPanelDetails = false;
 let showHelp = false;
 let worldOnly = false;
+let viewScale = 1, viewOx = 0, viewOy = 0;
 let flashMsg = '';
 let flashUntil = 0;
 
@@ -102,8 +103,14 @@ function draw() {
 
   background(worldOnly ? color(226, 28, 8) : color(226, 24, 7));
   push();
-  translate(PAD, PAD);
-  drawWorld();
+  if (worldOnly) {
+    translate(viewOx, viewOy);
+    scale(viewScale);
+    drawWorld();
+  } else {
+    translate(PAD, PAD);
+    drawWorld();
+  }
   pop();
   if (!worldOnly) drawPanel();
 }
@@ -633,8 +640,14 @@ function mousePressed() {
     showPanelDetails = !showPanelDetails;
     return;
   }
-  const wx = mouseX - PAD;
-  const wy = mouseY - PAD;
+  let wx, wy;
+  if (worldOnly) {
+    wx = (mouseX - viewOx) / viewScale;
+    wy = (mouseY - viewOy) / viewScale;
+  } else {
+    wx = mouseX - PAD;
+    wy = mouseY - PAD;
+  }
   if (wx < 0 || wx >= W || wy < 0 || wy >= H) return;
 
   let best = null;
@@ -655,17 +668,32 @@ function touchStarted() {
 }
 
 // -------------------------------------------------------------------- UI --
+function updateWorldOnlyView() {
+  if (!worldOnly || typeof resizeCanvas !== 'function') return;
+  const w = Math.max(1, window.innerWidth || W);
+  const h = Math.max(1, window.innerHeight || H);
+  resizeCanvas(w, h);
+  // cover: fill all corners (may crop edges of the torus view)
+  viewScale = Math.max(w / W, h / H);
+  viewOx = (w - W * viewScale) / 2;
+  viewOy = (h - H * viewScale) / 2;
+}
+
 function setWorldOnly(on) {
   worldOnly = !!on;
   const body = document.body;
   if (body) body.classList.toggle('world-only', worldOnly);
   if (typeof resizeCanvas === 'function') {
-    resizeCanvas(worldOnly ? W + PAD * 2 : W + PANEL + PAD * 3,
-                 worldOnly ? H + PAD * 2 : PH + PAD * 2);
+    if (worldOnly) updateWorldOnlyView();
+    else resizeCanvas(W + PANEL + PAD * 3, PH + PAD * 2);
   }
   const exit = document.getElementById('btn-exit-world');
   if (exit) exit.style.display = worldOnly ? 'block' : '';
   syncUI();
+}
+
+function windowResized() {
+  if (worldOnly) updateWorldOnlyView();
 }
 
 function toggleFullscreenWorld() {
