@@ -6,6 +6,7 @@
 
 const W = 900;
 const H = 700;
+const PH = H + 72;               // panel is taller than the world stage
 const PAD = 14;
 const PANEL = 320;
 
@@ -24,7 +25,7 @@ let flashMsg = '';
 let flashUntil = 0;
 
 function setup() {
-  const cnv = createCanvas(W + PANEL + PAD * 3, H + PAD * 2);
+  const cnv = createCanvas(W + PANEL + PAD * 3, PH + PAD * 2);
   cnv.parent('stage');
   pixelDensity(1);
   colorMode(HSB, 360, 100, 100, 100);
@@ -145,6 +146,26 @@ function drawWorld() {
     circle(c.x, c.y, c.radius * 2);
   }
 
+  // tissue rings: body composition as four coloured arcs around each body
+  const tissueHue = [120, 0, 210, 300];
+  noFill();
+  strokeWeight(1.4);
+  for (let i = 0; i < world.creatures.length; i++) {
+    const c = world.creatures[i];
+    if (c.cells < 4) continue;
+    const r = c.radius + 1.5;
+    let a = c.heading;
+    for (let k = 0; k < 4; k++) {
+      const span = c.tissues[k] * TAU;
+      if (span > 0.06) {
+        stroke(tissueHue[k], 60, 82, 65);
+        arc(c.x, c.y, r * 2, r * 2, a + 0.03, a + span - 0.03, OPEN, 5);
+      }
+      a += span;
+    }
+  }
+  noStroke();
+
   // heading ticks
   strokeWeight(1);
   for (let i = 0; i < world.creatures.length; i++) {
@@ -162,7 +183,7 @@ function drawWorld() {
     circle(selected.x, selected.y, selected.radius * 2 + 8);
     stroke(0, 0, 100, 18);
     strokeWeight(1);
-    circle(selected.x, selected.y, selected.genes.sense * 2);
+    circle(selected.x, selected.y, selected.traits.sense * 2);
     noStroke();
   }
 
@@ -187,7 +208,7 @@ function drawPanel() {
 
   noStroke();
   fill(226, 26, 12);
-  rect(0, 0, PANEL, H, 10);
+  rect(0, 0, PANEL, PH, 10);
 
   textAlign(LEFT);
   fill(0, 0, 100);
@@ -216,8 +237,7 @@ function drawPanel() {
   y = row('generation', s.maxGen + '  (avg ' + s.avgGen.toFixed(1) + ')', y);
   y = row('species', String(s.species), y);
   y = row('births / deaths', s.births + ' / ' + s.deaths, y);
-  y = row('immigrants', String(s.immigrants), y);
-  y = row('kills', String(s.kills), y);
+  y = row('kills / immigrants', s.kills + ' / ' + s.immigrants, y);
   y = row('reproduction', s.mode, y);
 
   y += 10;
@@ -237,18 +257,23 @@ function drawPanel() {
   if (selected) {
     const c = selected;
     let sy = y + 22;
-    sy = row('id / gen', '#' + c.id + '  gen ' + c.gen, sy);
-    sy = row('species', '#' + c.species, sy);
+    let reg = 0;
+    for (let i = 0; i < c.reg.length; i++) reg += Math.abs(c.reg[i]);
+    sy = row('id / gen / sp', '#' + c.id + '  ' + c.gen + '  ' + c.species, sy);
     sy = row('ATP', Math.max(0, c.energy).toFixed(0) + ' / ' + c.threshold.toFixed(0), sy);
     sy = energyBar(c, sy);
-    sy = row('nutrient / gut', c.nutrient.toFixed(0) + ' / ' + c.gutCap.toFixed(0), sy);
-    sy = row('biomass', c.biomass.toFixed(2) + ' / ' + c.targetMass.toFixed(2), sy);
-    sy = row('mature', (c.biomass >= c.matureBiomass ? 'yes' : 'no') +
-      '  (' + (100 * c.biomass / c.targetMass).toFixed(0) + '%)', sy);
+    sy = row('nutrient / biomass', c.nutrient.toFixed(0) + ' / ' + c.biomass.toFixed(2), sy);
+    sy = row('cells / mature', c.cells.toFixed(0) + ' / ' +
+      (c.biomass >= c.matureBiomass ? 'yes' : 'no'), sy);
+    sy = row('tissues g m n go', c.tissues[0].toFixed(2) + ' ' + c.tissues[1].toFixed(2) +
+      ' ' + c.tissues[2].toFixed(2) + ' ' + c.tissues[3].toFixed(2), sy);
+    sy = row('size', c.traits.size.toFixed(2), sy);
+    sy = row('speed gene', c.traits.speedMax.toFixed(2) + ' (' + c.genes.speedMax.toFixed(2) + ')', sy);
+    sy = row('sense gene', c.traits.sense.toFixed(0) + ' (' + c.genes.sense.toFixed(0) + ')', sy);
+    sy = row('enzyme reg', c.traits.enzyme.toFixed(2) + ' (' + c.genes.enzyme.toFixed(2) + ')  ' +
+      (reg / c.reg.length).toFixed(2), sy);
     sy = row('eaten / kills', c.eaten + ' / ' + c.kills, sy);
     sy = row('children / age', c.children + ' / ' + c.age, sy);
-    sy = row('size / speed', c.genes.size.toFixed(2) + ' / ' + c.genes.speedMax.toFixed(2), sy);
-    sy = row('sense / mut', c.genes.sense.toFixed(0) + ' / ' + c.genes.mutRate.toFixed(2), sy);
   } else {
     fill(0, 0, 38);
     textSize(10);

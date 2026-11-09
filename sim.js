@@ -81,9 +81,39 @@
     { key: 'mutRate',  min: 0.02, max: 0.60, sigma: 0.02 },
     { key: 'reproE',   min: 20,   max: 80,   sigma: 4    },
     { key: 'enzyme',   min: 0.25, max: 2.00, sigma: 0.08 },
+    // Developmental allocation: relative biomass investment in each tissue.
+    // These are normalised into fractions that sum to one, so only their
+    // ratios matter. `devTiming` is the maturity fraction at which the adult
+    // allocation fully replaces the juvenile allocation.
+    { key: 'allocGut',    min: 0.05, max: 1.00, sigma: 0.03 },
+    { key: 'allocMuscle', min: 0.05, max: 1.00, sigma: 0.03 },
+    { key: 'allocNerve',  min: 0.05, max: 1.00, sigma: 0.03 },
+    { key: 'allocGonad',  min: 0.05, max: 1.00, sigma: 0.03 },
+    { key: 'devTiming',   min: 0.30, max: 0.90, sigma: 0.03 },
   ];
   const GENE_BY_KEY = {};
-  for (let i = 0; i < GENE_DEFS.length; i++) GENE_BY_KEY[GENE_DEFS[i].key] = GENE_DEFS[i];
+  const GENE_DEFAULT = {};
+  for (let i = 0; i < GENE_DEFS.length; i++) {
+    const d = GENE_DEFS[i];
+    GENE_BY_KEY[d.key] = d;
+    GENE_DEFAULT[d.key] = (d.min + d.max) * 0.5;
+  }
+  // Neutral development: equal allocation and an adult switch at 60% maturity.
+  // Old saves predate these loci; filling these values keeps their creatures
+  // phenotypically unchanged.
+  const DEV_KEYS = ['allocGut', 'allocMuscle', 'allocNerve', 'allocGonad'];
+  for (let i = 0; i < DEV_KEYS.length; i++) GENE_DEFAULT[DEV_KEYS[i]] = 0.25;
+  GENE_DEFAULT.devTiming = 0.60;
+
+  function normalizeGenes(genes) {
+    for (let i = 0; i < GENE_DEFS.length; i++) {
+      const d = GENE_DEFS[i];
+      let v = +genes[d.key];
+      if (!Number.isFinite(v)) v = GENE_DEFAULT[d.key];
+      genes[d.key] = d.wrap ? wrap(v, 1) : clamp(v, d.min, d.max);
+    }
+    return genes;
+  }
 
   // Species / mating distance uses the functional genes. `hue` is deliberately
   // excluded: it is a neutral marker, so including it would split lineages
@@ -112,6 +142,107 @@
   function genomeDistance(a, b) {
     return vecDistance(genesToVec(a), genesToVec(b));
   }
+
+  // --------------------------------------------------------- regulation --
+  // A small recurrent gene-regulatory network. The scalar genes are the
+  // structural loci; this network decides how strongly each one is expressed
+  // given the creature's internal state. Regulators and promoters are
+  // heritable and mutate like anything else, so regulation itself evolves.
+  const REG_GENES = ['speedMax', 'sense', 'mutRate', 'reproE', 'enzyme'];
+  const REG_N = 4;      // regulatory proteins
+  const ENV_N = 6;      // environmental / internal inputs
+  const NG = REG_GENES.length;
+  const RG_BOUND = 4;
+
+  function zeroRg() {
+    return {
+      base: new Array(REG_N).fill(0),
+      W: new Array(REG_N * REG_N).fill(0),
+      V: new Array(REG_N * ENV_N).fill(0),
+      promBase: new Array(NG).fill(0),
+      promW: new Array(NG * REG_N).fill(0),
+    };
+  }
+
+  // Missing fields default to zero, which gives neutral expression: the
+  // realised trait equals the structural gene. That keeps v1/v2 saves loadable.
+  function normalizeRg(rg) {
+    const z = zeroRg();
+    if (!rg) return z;
+    const copy = (src, dst) => {
+      if (!src) return;
+      for (let i = 0; i < dst.length; i++) {
+        if (Number.isFinite(src[i])) dst[i] = +src[i];
+      }
+    };
+    copy(rg.base, z.base);
+    copy(rg.W, z.W);
+    copy(rg.V, z.V);
+    copy(rg.promBase, z.promBase);
+    copy(rg.promW, z.promW);
+    return z;
+  }
+
+  function randomRg(rng) {
+    const rg = zeroRg();
+    const f = () => rng.normal() * 0.35;
+    for (let i = 0; i < rg.base.length; i++) rg.base[i] = f();
+    for (let i = 0; i < rg.W.length; i++) rg.W[i] = f();
+    for (let i = 0; i < rg.V.length; i++) rg.V[i] = f();
+    for (let i = 0; i < rg.promBase.length; i++) rg.promBase[i] = f();
+    for (let i = 0; i < rg.promW.length; i++) rg.promW[i] = f();
+    return rg;
+  }
+
+  function mutateRg(parent, rng, scale) {
+    const rg = zeroRg();
+    const mut = (dst, src) => {
+      for (let i = 0; i < dst.length; i++) {
+        const v = (src ? src[i] : 0) + rng.normal() * 0.30 * scale;
+        dst[i] = clamp(v, -RG_BOUND, RG_BOUND);
+      }
+    };
+    mut(rg.base, parent.base);
+    mut(rg.W, parent.W);
+    mut(rg.V, parent.V);
+    mut(rg.promBase, parent.promBase);
+    mut(rg.promW, parent.promW);
+    return rg;
+  }
+
+  function crossoverRg(a, b, rng, scale) {
+    const rg = zeroRg();
+    const mix = (dst, x, y) => {
+      for (let i = 0; i < dst.length; i++) {
+        let v = rng.next() < 0.5 ? x[i] : y[i];
+        if (rng.next() < 0.25) v = (x[i] + y[i]) * 0.5;
+        dst[i] = clamp(v + rng.normal() * 0.30 * scale, -RG_BOUND, RG_BOUND);
+      }
+    };
+    mix(rg.base, a.base, b.base);
+    mix(rg.W, a.W, b.W);
+    mix(rg.V, a.V, b.V);
+    mix(rg.promBase, a.promBase, b.promBase);
+    mix(rg.promW, a.promW, b.promW);
+    return rg;
+  }
+
+  // ------------------------------------------------------------ development --
+  // Growth is cell division plus differentiation. New biomass is allocated
+  // across four tissues by a heritable program: juveniles bias investment
+  // toward gut and nerve, adults toward the adult allocation encoded in the
+  // structural genes. Tissue fractions then modulate realised traits, so
+  // body composition is visible in how a creature lives.
+  const TISSUE_N = 4; // gut, muscle, nerve, gonad
+
+  // Relative to an even 25% allocation, which is exactly neutral (factor 1).
+  function tissueFactor(f) {
+    return clamp(0.6 + 1.6 * f, 0.6, 1.5);
+  }
+  function gonadFactor(f) {
+    return clamp(1.3 - 1.2 * f, 0.7, 1.3);
+  }
+  const smoothstep = (u) => u * u * (3 - 2 * u);
 
   // ---------------------------------------------------------------- params --
   const DEFAULTS = {
@@ -165,9 +296,14 @@
     catabolism: 3.0,      // ATP released per biomass burned while starving
     gutBase: 18,          // gut capacity = gutBase + gutSize * size
     gutSize: 14,
-    birthMassFrac: 0.16,  // offspring biomass as a fraction of adult mass
+    birthMassFrac: 0.05,  // offspring biomass as a fraction of adult mass
     matureFrac: 0.72,     // fraction of adult mass needed to reproduce
     minBiomass: 0.02,     // below this a starving creature dies
+    cellMass: 0.02,       // biomass per cell; growth is cell division
+
+    // Gene regulation. Regulators relax toward their network target each tick;
+    // lower values make expression sluggish, higher values make it twitchy.
+    regRelax: 0.35,
 
     maxTurn: 0.28,   // radians per tick at full turn output
     steer: 0.25,     // velocity smoothing toward heading
@@ -265,6 +401,8 @@
       this._in = new Float32Array(IN);
       this._hid = new Float32Array(HID);
       this._out = new Float32Array(OUT);
+      this._reg = new Float32Array(REG_N);
+      this._env = new Float32Array(ENV_N);
 
       this.patches = [];
       for (let i = 0; i < p.patchCount; i++) {
@@ -289,6 +427,13 @@
         const g = GENE_DEFS[i];
         genes[g.key] = g.min + this.rng.next() * (g.max - g.min);
       }
+      // Founders start with a near-neutral body plan instead of a random
+      // allocation that would starve or explode. Mutation can still explore
+      // the whole range from here.
+      for (let i = 0; i < DEV_KEYS.length; i++) {
+        genes[DEV_KEYS[i]] = clamp(0.25 + this.rng.normal() * 0.04, 0.08, 0.6);
+      }
+      genes.devTiming = clamp(0.60 + this.rng.normal() * 0.04, 0.35, 0.85);
       const w = new Float32Array(NW);
       for (let i = 0; i < NW; i++) w[i] = this.rng.normal() * 0.35;
 
@@ -306,6 +451,7 @@
       w[48 + 1] = 0;
       w[54 + HID + 1] = 1.5 * jitter();        // hid 1 -> thrust
       w[IN * HID + HID + HID * OUT + 1] = 0.6; // thrust bias
+      genes.rg = randomRg(this.rng);
       return { genes, w };
     }
 
@@ -330,8 +476,91 @@
       c.radius = 2 + Math.sqrt(c.mass) * 2.2;
     }
 
+    // Realised traits are the structural genes filtered through the current
+    // regulatory state, then through body composition. `size` stays
+    // structural (it sets the adult target); the rest can be up- or
+    // down-regulated within 0.5x..1.5x of the gene.
+    computeTraits(c) {
+      const rg = c.genes.rg;
+      const t = c.traits;
+      const g = c.genes;
+      t.size = g.size;
+      for (let i = 0; i < NG; i++) {
+        const key = REG_GENES[i];
+        let z = rg.promBase[i];
+        for (let j = 0; j < REG_N; j++) z += rg.promW[i * REG_N + j] * c.reg[j];
+        const e = 1 / (1 + Math.exp(-z));
+        const d = GENE_BY_KEY[key];
+        const norm = (g[key] - d.min) / (d.max - d.min);
+        t[key] = d.min + (d.max - d.min) * clamp(norm * (0.5 + e), 0, 1);
+      }
+
+      // ---- development ----
+      // Allocate body biomass across tissues. Juvenile weights bias gut and
+      // nerve; adult weights are the heritable allocation. The switch happens
+      // smoothly over `devTiming` of the way to adult mass.
+      const sum = g.allocGut + g.allocMuscle + g.allocNerve + g.allocGonad;
+      const aG = g.allocGut / sum, aM = g.allocMuscle / sum;
+      const aN = g.allocNerve / sum, aGo = g.allocGonad / sum;
+      const jG = g.allocGut * 1.6, jM = g.allocMuscle * 0.5;
+      const jN = g.allocNerve * 1.4, jGo = g.allocGonad * 0.15;
+      const jsum = jG + jM + jN + jGo;
+      const m = clamp(c.biomass / c.targetMass, 0, 1);
+      const u = clamp(m / g.devTiming, 0, 1);
+      const s = smoothstep(u);
+      const tis = c.tissues;
+      tis[0] = (jG / jsum) + (aG - jG / jsum) * s;
+      tis[1] = (jM / jsum) + (aM - jM / jsum) * s;
+      tis[2] = (jN / jsum) + (aN - jN / jsum) * s;
+      tis[3] = (jGo / jsum) + (aGo - jGo / jsum) * s;
+
+      const gf = tissueFactor(tis[0]);
+      const mf = tissueFactor(tis[1]);
+      const nf = tissueFactor(tis[2]);
+      const gof = gonadFactor(tis[3]);
+      t.enzyme *= gf;
+      t.speedMax *= mf;
+      t.sense *= nf;
+
+      c.gutCap = (this.p.gutBase + this.p.gutSize * g.size) * gf;
+      if (c.nutrient > c.gutCap) c.nutrient = c.gutCap;
+      // Cell count is a developmental readout: every offspring starts as one
+      // cell, and division tracks progress from birth mass to adult mass.
+      const birthB = c.targetMass * this.p.birthMassFrac;
+      const df = clamp((c.biomass - birthB) / (c.targetMass - birthB), 0, 1);
+      const adultCells = Math.max(2, Math.round(c.targetMass / this.p.cellMass));
+      c.cells = 1 + Math.round(df * (adultCells - 1));
+      c.threshold = (this.p.thresholdBase + t.reproE * c.targetMass) * gof;
+      c.maxEnergy = c.threshold * 1.7;
+    }
+
+    updateRegulation(c, fprox, crowding) {
+      const rg = c.genes.rg;
+      const env = this._env;
+      env[0] = clamp(c.nutrient / c.gutCap, 0, 1);
+      env[1] = clamp(c.energy / c.threshold, 0, 1.5) / 1.5;
+      env[2] = clamp(c.biomass / c.targetMass, 0, 1);
+      env[3] = clamp(crowding / 8, 0, 1);
+      env[4] = clamp(fprox, 0, 1);
+      env[5] = clamp(c.age / 500, 0, 1);
+
+      const reg = c.reg;
+      const next = this._reg;
+      for (let i = 0; i < REG_N; i++) {
+        let s = rg.base[i];
+        for (let j = 0; j < REG_N; j++) s += rg.W[i * REG_N + j] * reg[j];
+        for (let k = 0; k < ENV_N; k++) s += rg.V[i * ENV_N + k] * env[k];
+        next[i] = Math.tanh(s);
+      }
+      const a = this.p.regRelax;
+      for (let i = 0; i < REG_N; i++) reg[i] += (next[i] - reg[i]) * a;
+      this.computeTraits(c);
+    }
+
     makeCreature(genes, weights, gen, x, y, heading) {
       const p = this.p;
+      normalizeGenes(genes);
+      if (!genes.rg) genes.rg = zeroRg();
       const targetMass = genes.size * genes.size;
       const c = {
         id: this.nextId++,
@@ -355,12 +584,17 @@
         nutrient: 0,
         biomass: targetMass,
         gutCap: p.gutBase + p.gutSize * genes.size,
+        reg: new Float32Array(REG_N),
+        tissues: new Float32Array(TISSUE_N),
+        traits: { size: genes.size },
+        cells: 1,
       };
       c.mass075 = Math.pow(c.mass, 0.75);
       c.threshold = p.thresholdBase + genes.reproE * targetMass;
       c.maxEnergy = c.threshold * 1.7;
       c.matureBiomass = targetMass * p.matureFrac;
       this.setBiomass(c, targetMass * p.birthMassFrac);
+      this.computeTraits(c);
       c.energy = c.threshold * 0.55;
       return c;
     }
@@ -370,7 +604,7 @@
     childOf(parent) {
       const p = this.p;
       const g = parent.genes;
-      const scale = clamp(g.mutRate, 0.02, 0.6) / 0.15;
+      const scale = clamp(parent.traits.mutRate, 0.02, 0.6) / 0.15;
 
       const genes = {};
       for (let i = 0; i < GENE_DEFS.length; i++) {
@@ -379,6 +613,7 @@
         v = d.wrap ? wrap(v, 1) : clamp(v, d.min, d.max);
         genes[d.key] = v;
       }
+      genes.rg = mutateRg(g.rg || zeroRg(), this.rng, scale);
 
       const w = new Float32Array(NW);
       for (let i = 0; i < NW; i++) {
@@ -400,7 +635,7 @@
     // occasional averaging of weights, then mutated at the parents' mean rate.
     childOfSexual(a, b) {
       const p = this.p;
-      const meanMut = clamp((a.genes.mutRate + b.genes.mutRate) * 0.5, 0.02, 0.6);
+      const meanMut = clamp((a.traits.mutRate + b.traits.mutRate) * 0.5, 0.02, 0.6);
       const scale = meanMut / 0.15;
 
       const genes = {};
@@ -411,6 +646,7 @@
         v = d.wrap ? wrap(v, 1) : clamp(v, d.min, d.max);
         genes[d.key] = v;
       }
+      genes.rg = crossoverRg(a.genes.rg || zeroRg(), b.genes.rg || zeroRg(), this.rng, scale);
 
       const w = new Float32Array(NW);
       for (let i = 0; i < NW; i++) {
@@ -642,7 +878,7 @@
 
     updateCreature(c) {
       const p = this.p;
-      const sense = c.genes.sense;
+      const sense = c.traits.sense;
       const sense2 = sense * sense;
 
       // ---- nearest food ----
@@ -712,6 +948,11 @@
         oy /= sense;
       }
 
+      // ---- gene regulation ----
+      // Internal state and local conditions feed the regulatory network; the
+      // resulting protein levels decide how strongly each trait is expressed.
+      this.updateRegulation(c, fprox, cand2.length);
+
       // ---- brain ----
       // Inputs are egocentric: forward/right relative to heading, not world
       // x/y. That makes "turn toward food" a single positive weight, which
@@ -725,7 +966,7 @@
       inp[3] = (ox * ch + oy * sh);          // creature, forward
       inp[4] = (-ox * sh + oy * ch);         // creature, right
       inp[5] = clamp(c.energy / c.threshold, 0, 1.6) * 0.75;
-      inp[6] = clamp(Math.sqrt(c.vx * c.vx + c.vy * c.vy) / c.genes.speedMax, 0, 1);
+      inp[6] = clamp(Math.sqrt(c.vx * c.vx + c.vy * c.vy) / c.traits.speedMax, 0, 1);
       inp[7] = 1;
 
       const w = c.w;
@@ -749,7 +990,7 @@
       const thrust = (out[1] + 1) * 0.5;
       c.heading = wrap(c.heading + turn * p.maxTurn, TAU);
 
-      const tv = thrust * c.genes.speedMax;
+      const tv = thrust * c.traits.speedMax;
       c.vx += (Math.cos(c.heading) * tv - c.vx) * p.steer;
       c.vy += (Math.sin(c.heading) * tv - c.vy) * p.steer;
       c.x = wrap(c.x + c.vx, this.w);
@@ -786,7 +1027,7 @@
       // nutrient becomes ATP and biomass. Growth is paid for in ATP, so body
       // size and reproduction compete for the same budget.
       if (c.nutrient > 0) {
-        const flux = p.digestRate * c.genes.enzyme * c.nutrient / (c.nutrient + p.digestKm);
+        const flux = p.digestRate * c.traits.enzyme * c.nutrient / (c.nutrient + p.digestKm);
         const used = Math.min(flux, c.nutrient);
         c.nutrient -= used;
         c.energy += used * p.atpYield;
@@ -836,7 +1077,7 @@
     // ------------------------------------------------------------ serialize --
     serialize() {
       return {
-        version: 2,
+        version: 4,
         seed: this.seed,
         rng: this.rng.state >>> 0,
         // Rng.normal() keeps one sample in reserve; without it a resumed run
@@ -880,12 +1121,15 @@
           age: c.age,
           species: c.species,
           speciesHue: c.speciesHue,
+          // Current regulatory state. Without it a resumed creature would
+          // re-express from zero and its traits would jump on load.
+          reg: Array.from(c.reg),
         })),
       };
     }
 
     static fromJSON(obj) {
-      if (!obj || (obj.version !== 1 && obj.version !== 2)) {
+      if (!obj || (obj.version !== 1 && obj.version !== 2 && obj.version !== 3 && obj.version !== 4)) {
         throw new Error('Unsupported save file');
       }
       const params = Object.assign({}, obj.params || {});
@@ -922,6 +1166,12 @@
         if (!c.genes || !Array.isArray(c.w) || c.w.length !== NW) {
           throw new Error('Invalid creature in save file');
         }
+        // v1/v2 saves have no regulatory genome or state; normalizing fills
+        // zeros, which express the structural genes unchanged. v1-v3 saves
+        // also predate developmental allocation, so those loci default to an
+        // even body plan.
+        normalizeGenes(c.genes);
+        c.genes.rg = normalizeRg(c.genes.rg);
         const cr = w.makeCreature(c.genes, Float32Array.from(c.w), c.gen | 0,
           +c.x, +c.y, +c.heading);
         cr.id = c.id | 0;
@@ -938,6 +1188,13 @@
         // adults with an empty gut.
         w.setBiomass(cr, Number.isFinite(c.biomass) ? c.biomass : cr.targetMass);
         cr.nutrient = Number.isFinite(c.nutrient) ? c.nutrient : 0;
+        // Restore regulatory activity and re-derive realised traits from it.
+        if (Array.isArray(c.reg)) {
+          for (let i = 0; i < REG_N; i++) {
+            if (Number.isFinite(c.reg[i])) cr.reg[i] = +c.reg[i];
+          }
+        }
+        w.computeTraits(cr);
         return cr;
       });
 
@@ -982,15 +1239,23 @@
     stats() {
       const n = this.creatures.length;
       let size = 0, speed = 0, sense = 0, mut = 0, repro = 0, gen = 0, energy = 0, kills = 0;
-      let enzyme = 0, biomass = 0, maturity = 0, nutrient = 0;
+      let enzyme = 0, biomass = 0, maturity = 0, nutrient = 0, regActivity = 0;
+      let cells = 0, gut = 0, muscle = 0, nerve = 0, gonad = 0;
       for (let i = 0; i < n; i++) {
         const c = this.creatures[i];
-        size += c.genes.size;
-        speed += c.genes.speedMax;
-        sense += c.genes.sense;
-        mut += c.genes.mutRate;
-        repro += c.genes.reproE;
-        enzyme += c.genes.enzyme;
+        const t = c.traits;
+        size += t.size;
+        speed += t.speedMax;
+        sense += t.sense;
+        mut += t.mutRate;
+        repro += t.reproE;
+        enzyme += t.enzyme;
+        for (let j = 0; j < REG_N; j++) regActivity += Math.abs(c.reg[j]);
+        cells += c.cells;
+        gut += c.tissues[0];
+        muscle += c.tissues[1];
+        nerve += c.tissues[2];
+        gonad += c.tissues[3];
         kills += c.kills;
         gen += c.gen;
         energy += c.energy / c.threshold;
@@ -1021,6 +1286,9 @@
         biomass: biomass / d,
         maturity: maturity / d,
         nutrient: nutrient / d,
+        regActivity: regActivity / (d * REG_N),
+        cells: cells / d,
+        tissues: [gut / d, muscle / d, nerve / d, gonad / d],
         kills,
         fill: energy / d,
         species: this.species.length,

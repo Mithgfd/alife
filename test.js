@@ -44,6 +44,7 @@ for (let t = 1; t <= TICKS; t++) {
       `  size=${s.size.toFixed(2)}  spd=${s.speed.toFixed(2)}` +
       `  sense=${s.sense.toFixed(0)}  enz=${s.enzyme.toFixed(2)}` +
       `  bio=${s.biomass.toFixed(2)}  mature=${(100 * s.maturity).toFixed(0)}%` +
+      `  cells=${s.cells.toFixed(0)}  tis=${s.tissues.map((v) => v.toFixed(2)).join('/')}` +
       `  mut=${s.mutRate.toFixed(3)}  repro=${s.reproE.toFixed(0)}` +
       `  imm=${s.immigrants}`
     );
