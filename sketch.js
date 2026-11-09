@@ -478,7 +478,7 @@ function syncUI() {
   $('btn-predation').classList.toggle('on', world.p.predation);
   $('btn-color').textContent = 'colour: ' + colorBy;
   $('btn-color').classList.toggle('on', colorBy === 'species');
-  $('btn-sexual').textContent = 'sex: ' + (world.p.sexual ? 'on' : 'off');
+  $('btn-sexual').textContent = 'sexual: ' + (world.p.sexual ? 'on' : 'off');
   $('btn-sexual').classList.toggle('on', world.p.sexual);
   $('seed-label').textContent = 'seed ' + world.seed;
 }
