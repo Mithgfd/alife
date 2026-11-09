@@ -218,28 +218,28 @@
   </header>
 
   <div id="toolbar">
-    <button id="btn-pause" title="Space">pause</button>
+    <button id="btn-pause">pause</button>
     <span class="group speed-control">
       <label for="speed">speed</label>
       <input id="speed" type="range" min="1" max="128" value="4" step="1" title="Simulation steps per frame">
       <output id="speed-value" for="speed">4&times;</output>
     </span>
     <span class="group">
-      <button id="btn-reset" title="Reset with a fresh seed (R)">reset</button>
+      <button id="btn-reset" title="Reset with a fresh seed">reset</button>
       <details class="more-menu" id="more-menu">
         <summary title="Save, load, and share">more</summary>
         <div class="more-items">
           <button id="btn-share">copy share link</button>
-          <button id="btn-save">save JSON (D)</button>
-          <button id="btn-load">load JSON (L)</button>
+          <button id="btn-save">save JSON</button>
+          <button id="btn-load">load JSON</button>
         </div>
       </details>
       <input id="file" type="file" accept="application/json" hidden>
     </span>
     <span class="group">
-      <button id="btn-predation" title="Toggle predation (P)">predation: on</button>
-      <button id="btn-color" title="Toggle colour mode (C)">colour: genes</button>
-      <button id="btn-sexual" title="Toggle reproduction mode (S)">sexual: on</button>
+      <button id="btn-predation" title="Toggle predation">predation: on</button>
+      <button id="btn-color" title="Toggle colour mode">colour: genes</button>
+      <button id="btn-sexual" title="Toggle reproduction mode">sexual: on</button>
       <button id="btn-species" title="Open species catalog">species catalog</button>
     </span>
     <button id="btn-help" title="Keyboard shortcuts">?</button>
@@ -247,7 +247,7 @@
   </div>
 
   <div id="help-panel" aria-hidden="true">
-    <b>Shortcuts:</b> Space pause · 1-4 speed presets · R reset · P predation · C colour · S sexual · D save · L load · click a creature to inspect. Use the bottom-left <b>species</b> button for lineage history.
+    <b>Help:</b> Use the toolbar to pause, change speed, reset, save/load/share, and toggle simulation options. Click a creature to inspect it. Use the bottom-left <b>species</b> button for lineage history.
   </div>
 
   <div id="species-panel" aria-hidden="true">
