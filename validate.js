@@ -45,6 +45,7 @@ for (const seed of SEEDS) {
     `zero ${String(zero).padStart(4)}  pinned ${String(pinned).padStart(4)}  ` +
     `gen ${String(s.maxGen).padStart(3)}  species ${String(s.species).padStart(2)}  ` +
     `size ${s.size.toFixed(2)}  speed ${s.speed.toFixed(2)}  sense ${s.sense.toFixed(0)}  ` +
+    `enz ${s.enzyme.toFixed(2)}  bio ${s.biomass.toFixed(2)}  mature ${(100 * s.maturity).toFixed(0)}%  ` +
     `kills ${s.kills}  imm ${s.immigrants}`
   );
 }

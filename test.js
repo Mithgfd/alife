@@ -42,7 +42,9 @@ for (let t = 1; t <= TICKS; t++) {
       `t=${String(t).padStart(6)}  pop=${String(pop).padStart(3)}  food=${String(s.food).padStart(3)}` +
       `  gen=${s.maxGen.toFixed(0)}  species=${s.species}` +
       `  size=${s.size.toFixed(2)}  spd=${s.speed.toFixed(2)}` +
-      `  sense=${s.sense.toFixed(0)}  mut=${s.mutRate.toFixed(3)}  repro=${s.reproE.toFixed(0)}` +
+      `  sense=${s.sense.toFixed(0)}  enz=${s.enzyme.toFixed(2)}` +
+      `  bio=${s.biomass.toFixed(2)}  mature=${(100 * s.maturity).toFixed(0)}%` +
+      `  mut=${s.mutRate.toFixed(3)}  repro=${s.reproE.toFixed(0)}` +
       `  imm=${s.immigrants}`
     );
   }

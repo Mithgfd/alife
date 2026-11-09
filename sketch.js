@@ -225,6 +225,7 @@ function drawPanel() {
   y = bar('size', s.size, 0.55, 2.1, y, 200);
   y = bar('speed', s.speed, 0.2, 2.2, y, 150);
   y = bar('sense', s.sense, 12, 110, y, 55);
+  y = bar('enzyme', s.enzyme, 0.25, 2.0, y, 90);
   y = bar('mutation', s.mutRate, 0.02, 0.6, y, 300);
 
   y += 12;
@@ -238,8 +239,12 @@ function drawPanel() {
     let sy = y + 22;
     sy = row('id / gen', '#' + c.id + '  gen ' + c.gen, sy);
     sy = row('species', '#' + c.species, sy);
-    sy = row('energy', Math.max(0, c.energy).toFixed(0) + ' / ' + c.threshold.toFixed(0), sy);
+    sy = row('ATP', Math.max(0, c.energy).toFixed(0) + ' / ' + c.threshold.toFixed(0), sy);
     sy = energyBar(c, sy);
+    sy = row('nutrient / gut', c.nutrient.toFixed(0) + ' / ' + c.gutCap.toFixed(0), sy);
+    sy = row('biomass', c.biomass.toFixed(2) + ' / ' + c.targetMass.toFixed(2), sy);
+    sy = row('mature', (c.biomass >= c.matureBiomass ? 'yes' : 'no') +
+      '  (' + (100 * c.biomass / c.targetMass).toFixed(0) + '%)', sy);
     sy = row('eaten / kills', c.eaten + ' / ' + c.kills, sy);
     sy = row('children / age', c.children + ' / ' + c.age, sy);
     sy = row('size / speed', c.genes.size.toFixed(2) + ' / ' + c.genes.speedMax.toFixed(2), sy);

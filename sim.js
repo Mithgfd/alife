@@ -80,6 +80,7 @@
     { key: 'hue',      min: 0,    max: 1,    sigma: 0.02, wrap: true },
     { key: 'mutRate',  min: 0.02, max: 0.60, sigma: 0.02 },
     { key: 'reproE',   min: 20,   max: 80,   sigma: 4    },
+    { key: 'enzyme',   min: 0.25, max: 2.00, sigma: 0.08 },
   ];
   const GENE_BY_KEY = {};
   for (let i = 0; i < GENE_DEFS.length; i++) GENE_BY_KEY[GENE_DEFS[i].key] = GENE_DEFS[i];
@@ -87,7 +88,7 @@
   // Species / mating distance uses the functional genes. `hue` is deliberately
   // excluded: it is a neutral marker, so including it would split lineages
   // every time colour drifted.
-  const SPECIES_KEYS = ['size', 'speedMax', 'sense', 'mutRate', 'reproE'];
+  const SPECIES_KEYS = ['size', 'speedMax', 'sense', 'mutRate', 'reproE', 'enzyme'];
   const SPECIES_RANGES = SPECIES_KEYS.map((k) => GENE_BY_KEY[k].max - GENE_BY_KEY[k].min);
 
   function genesToVec(genes) {
@@ -142,7 +143,7 @@
     predation: true,
     preySizeRatio: 1.45,
     preyEnergyGain: 0.5,
-    preyMassGain: 22,
+    preyMassGain: 12,
 
     // Metabolism. The fixed `basal` term and the `thresholdBase` in the
     // reproduction threshold are what stop "be as small as possible" from
@@ -151,6 +152,22 @@
     basalMass: 0.04,
     moveCost: 0.12,
     thresholdBase: 30,
+
+    // Digestion: food is nutrient, not usable energy. The enzyme gene sets the
+    // catalyst level; nutrient is converted to ATP (usable energy) and biomass
+    // (body material) at a Michaelis-Menten rate. Growing biomass costs ATP, so
+    // growth and reproduction compete for the same budget.
+    digestRate: 5.0,      // max nutrient processed per tick at enzyme = 1
+    digestKm: 12,         // nutrient level at half-maximal digestion
+    atpYield: 1.0,        // ATP per nutrient
+    biomassYield: 0.030,  // biomass per nutrient
+    growthCost: 5.0,      // ATP spent per biomass synthesized
+    catabolism: 3.0,      // ATP released per biomass burned while starving
+    gutBase: 18,          // gut capacity = gutBase + gutSize * size
+    gutSize: 14,
+    birthMassFrac: 0.16,  // offspring biomass as a fraction of adult mass
+    matureFrac: 0.72,     // fraction of adult mass needed to reproduce
+    minBiomass: 0.02,     // below this a starving creature dies
 
     maxTurn: 0.28,   // radians per tick at full turn output
     steer: 0.25,     // velocity smoothing toward heading
@@ -294,14 +311,28 @@
 
     randomCreature() {
       const g = this.randomGenome();
-      return this.makeCreature(
+      const c = this.makeCreature(
         g.genes, g.w, 0,
         this.rng.next() * this.w, this.rng.next() * this.h,
         this.rng.next() * TAU
       );
+      // Founders and immigrants arrive as adults; only offspring start small.
+      this.setBiomass(c, c.targetMass);
+      return c;
+    }
+
+    // Body size follows accumulated biomass, so juveniles are genuinely small
+    // and become both faster and more conspicuous as they grow.
+    setBiomass(c, biomass) {
+      c.biomass = Math.max(this.p.minBiomass, biomass);
+      c.mass = c.biomass;
+      c.mass075 = Math.pow(c.mass, 0.75);
+      c.radius = 2 + Math.sqrt(c.mass) * 2.2;
     }
 
     makeCreature(genes, weights, gen, x, y, heading) {
+      const p = this.p;
+      const targetMass = genes.size * genes.size;
       const c = {
         id: this.nextId++,
         genes,
@@ -310,7 +341,8 @@
         x, y, heading,
         vx: 0,
         vy: 0,
-        mass: genes.size * genes.size,
+        targetMass,
+        mass: targetMass,
         radius: 2 + genes.size * 2.2,
         eaten: 0,
         kills: 0,
@@ -320,10 +352,15 @@
         species: 0,
         speciesHue: 0,
         matedTick: -1,
+        nutrient: 0,
+        biomass: targetMass,
+        gutCap: p.gutBase + p.gutSize * genes.size,
       };
       c.mass075 = Math.pow(c.mass, 0.75);
-      c.threshold = this.p.thresholdBase + genes.reproE * c.mass;
+      c.threshold = p.thresholdBase + genes.reproE * targetMass;
       c.maxEnergy = c.threshold * 1.7;
+      c.matureBiomass = targetMass * p.matureFrac;
+      this.setBiomass(c, targetMass * p.birthMassFrac);
       c.energy = c.threshold * 0.55;
       return c;
     }
@@ -502,6 +539,7 @@
       for (let i = 0; i < cand.length; i++) {
         const o = cand[i];
         if (o === c || o.dead || o.matedTick === this.tick) continue;
+        if (o.biomass < o.matureBiomass) continue;
         if (o.energy < o.threshold * p.mateMinEnergy) continue;
         const dx = wrapDelta(o.x - c.x, this.w);
         const dy = wrapDelta(o.y - c.y, this.h);
@@ -564,11 +602,13 @@
         this.births++;
       }
 
-      // compact out the dead
+      // compact out the dead. A creature survives on ATP or on remaining body
+      // mass; a predation kill is marked dead with energy -1 and cannot pay.
       let k = 0;
       for (let i = 0; i < list.length; i++) {
         const c = list[i];
-        if (c.energy > 0) {
+        const alive = c.energy > 0 || (c.energy >= 0 && c.biomass > p.minBiomass);
+        if (alive) {
           // `dead` is a per-tick marker set by predation. A creature can be
           // marked dead and still eat later in the same tick, so it may
           // survive; clear the marker or it would stay invisible to sensing,
@@ -640,6 +680,8 @@
         // Predation: any creature can eat one much smaller than itself. Size
         // is the trait, so there's no gene "valley" to cross: being big is
         // immediately worth something, and being small is immediately risky.
+        // One prey per tick models handling time and stops a single predator
+        // from clearing a whole shoal in one step.
         if (p.predation && c.mass > o.mass * p.preySizeRatio) {
           const touch = c.radius + o.radius;
           if (d < touch * touch) {
@@ -648,7 +690,7 @@
             c.kills++;
             o.energy = -1;
             o.dead = true;
-            continue;
+            break;
           }
         }
 
@@ -718,26 +760,65 @@
       c.energy -= p.basal + p.basalMass * c.mass + p.moveCost * c.mass075 * v2;
 
       // ---- eat (one item per tick, nearest first) ----
+      // Food is nutrient, not usable energy. A full gut means the creature
+      // leaves the food alone until it has digested what it already has.
       const eatR = c.radius + p.foodRadius + 2;
       const near = this.foodGrid.query(c.x, c.y, eatR, this._candA);
       let meal = null, mealD = eatR * eatR;
-      for (let i = 0; i < near.length; i++) {
-        const f = near[i];
-        if (f.dead) continue;
-        const dx = wrapDelta(f.x - c.x, this.w);
-        const dy = wrapDelta(f.y - c.y, this.h);
-        const d = dx * dx + dy * dy;
-        if (d < mealD) { mealD = d; meal = f; }
+      if (c.nutrient < c.gutCap) {
+        for (let i = 0; i < near.length; i++) {
+          const f = near[i];
+          if (f.dead) continue;
+          const dx = wrapDelta(f.x - c.x, this.w);
+          const dy = wrapDelta(f.y - c.y, this.h);
+          const d = dx * dx + dy * dy;
+          if (d < mealD) { mealD = d; meal = f; }
+        }
+        if (meal) {
+          meal.dead = true;
+          c.nutrient = Math.min(c.gutCap, c.nutrient + meal.e);
+          c.eaten++;
+        }
       }
-      if (meal) {
-        meal.dead = true;
-        c.energy = Math.min(c.maxEnergy, c.energy + meal.e);
-        c.eaten++;
+
+      // ---- metabolism ----
+      // Michaelis-Menten digestion. The enzyme gene sets catalyst abundance;
+      // nutrient becomes ATP and biomass. Growth is paid for in ATP, so body
+      // size and reproduction compete for the same budget.
+      if (c.nutrient > 0) {
+        const flux = p.digestRate * c.genes.enzyme * c.nutrient / (c.nutrient + p.digestKm);
+        const used = Math.min(flux, c.nutrient);
+        c.nutrient -= used;
+        c.energy += used * p.atpYield;
+
+        if (c.biomass < c.targetMass) {
+          const biomassGain = used * p.biomassYield;
+          const affordable = Math.max(0, c.energy) / p.growthCost;
+          const grow = Math.min(biomassGain, c.targetMass - c.biomass, affordable);
+          if (grow > 0) {
+            this.setBiomass(c, c.biomass + grow);
+            c.energy -= grow * p.growthCost;
+          }
+        }
+      }
+
+      // ---- starvation ----
+      // ATP debt is paid by burning biomass; run out of body and you die.
+      if (c.energy < 0) {
+        const burn = Math.min(c.biomass, -c.energy / p.catabolism);
+        c.biomass -= burn;
+        c.energy += burn * p.catabolism;
+        if (c.biomass <= p.minBiomass) {
+          c.energy = -1;
+        } else {
+          this.setBiomass(c, c.biomass);
+        }
       }
 
       // ---- reproduce ----
       if (
         c.energy >= c.threshold &&
+        c.biomass >= c.matureBiomass &&
         c.matedTick !== this.tick &&
         this.creatures.length + this.born.length < p.maxPop
       ) {
@@ -755,7 +836,7 @@
     // ------------------------------------------------------------ serialize --
     serialize() {
       return {
-        version: 1,
+        version: 2,
         seed: this.seed,
         rng: this.rng.state >>> 0,
         // Rng.normal() keeps one sample in reserve; without it a resumed run
@@ -791,6 +872,8 @@
           x: c.x, y: c.y, heading: c.heading,
           vx: c.vx, vy: c.vy,
           energy: c.energy,
+          nutrient: c.nutrient,
+          biomass: c.biomass,
           eaten: c.eaten,
           kills: c.kills,
           children: c.children,
@@ -802,7 +885,9 @@
     }
 
     static fromJSON(obj) {
-      if (!obj || obj.version !== 1) throw new Error('Unsupported save file');
+      if (!obj || (obj.version !== 1 && obj.version !== 2)) {
+        throw new Error('Unsupported save file');
+      }
       const params = Object.assign({}, obj.params || {});
       const w = new World(Object.assign({}, params, {
         seed: obj.seed,
@@ -849,6 +934,10 @@
         cr.age = c.age | 0;
         cr.species = c.species | 0;
         cr.speciesHue = +c.speciesHue || 0;
+        // v1 saves predate the metabolism layer; treat their creatures as
+        // adults with an empty gut.
+        w.setBiomass(cr, Number.isFinite(c.biomass) ? c.biomass : cr.targetMass);
+        cr.nutrient = Number.isFinite(c.nutrient) ? c.nutrient : 0;
         return cr;
       });
 
@@ -893,6 +982,7 @@
     stats() {
       const n = this.creatures.length;
       let size = 0, speed = 0, sense = 0, mut = 0, repro = 0, gen = 0, energy = 0, kills = 0;
+      let enzyme = 0, biomass = 0, maturity = 0, nutrient = 0;
       for (let i = 0; i < n; i++) {
         const c = this.creatures[i];
         size += c.genes.size;
@@ -900,9 +990,13 @@
         sense += c.genes.sense;
         mut += c.genes.mutRate;
         repro += c.genes.reproE;
+        enzyme += c.genes.enzyme;
         kills += c.kills;
         gen += c.gen;
         energy += c.energy / c.threshold;
+        biomass += c.biomass / c.targetMass;
+        maturity += c.biomass >= c.matureBiomass ? 1 : 0;
+        nutrient += c.nutrient;
       }
       const d = n || 1;
       let dominant = 0;
@@ -923,6 +1017,10 @@
         sense: sense / d,
         mutRate: mut / d,
         reproE: repro / d,
+        enzyme: enzyme / d,
+        biomass: biomass / d,
+        maturity: maturity / d,
+        nutrient: nutrient / d,
         kills,
         fill: energy / d,
         species: this.species.length,
