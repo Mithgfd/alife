@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <sub>A small artificial-life world in p5.js. Creatures carry a genome, run a tiny neural net, digest food into ATP and biomass, regulate genes through a heritable network, and develop from a single cell into a body built from four tissues. Food is the only primary resource; everything else is evolution finding a way to convert it into copies of itself.</sub>
+  <sub>A small artificial-life world in p5.js. Creatures carry a genome, run a tiny neural net, digest flora/fauna into ATP and biomass, regulate genes through a heritable network, and develop from a single cell into a body built from four tissues. A deterministic habitat with seasons, diet specialization, threat sensing, effort control, and morphology-dependent movement/defense create niches and coevolutionary pressure. Food is the only primary resource; everything else is evolution finding a way to convert it into copies of itself.</sub>
 </p>
 
 <p align="center">
@@ -12,21 +12,7 @@
 
 <br>
 
-<table align="center">
-  <tr>
-    <td align="center"><strong>14 – 496</strong><br><sub>population</sub></td>
-    <td align="center">&nbsp;&nbsp;&nbsp;</td>
-    <td align="center"><strong>88 – 270</strong><br><sub>generations</sub></td>
-    <td align="center">&nbsp;&nbsp;&nbsp;</td>
-    <td align="center"><strong>3 – 9</strong><br><sub>species</sub></td>
-    <td align="center">&nbsp;&nbsp;&nbsp;</td>
-    <td align="center"><strong>0</strong><br><sub>extinctions</sub></td>
-    <td align="center">&nbsp;&nbsp;&nbsp;</td>
-    <td align="center"><strong>0</strong><br><sub>pinned at cap</sub></td>
-  </tr>
-</table>
-
-<p align="center"><sub>Ten seeded runs × 50k ticks on the shipped defaults. Reproduce with <code>SEEDS=1,2,3,4,5,6,7,8,9,10 TICKS=50000 node validate.js</code>.</sub></p>
+<p align="center"><sub>Current defaults emphasize realism (habitat niches, seasons, diet specialization, morphology, effort/threat behavior, and non-guaranteed predation). Measure stability and trait dynamics with <code>node validate.js</code> or, for a longer check, <code>SEEDS=1,2,3,4,5,6,7,8,9,10 TICKS=50000 node validate.js</code>.</sub></p>
 
 ---
 
@@ -108,7 +94,7 @@ creatures dim out. Switch to **colour: species** to see the clustering instead.
 
 ### Genome
 
-Eleven structural scalars, a small regulatory genome, and 68 neural weights.
+Eleven structural scalars, a small regulatory genome, and 117 neural-network weights (14 inputs, 6 hidden, 3 outputs). Older save brains are migrated on load.
 
 | Gene | Range | What it does |
 |:---|:---:|:---|
@@ -160,9 +146,11 @@ Growth is also differentiation. New biomass is split across four tissues:
 | Tissue | Realised effect |
 |:---|:---|
 | Gut | Digestion rate and gut capacity |
-| Muscle | Top speed |
-| Nerve | Perception radius |
+| Muscle | Top speed, propulsion efficiency, maneuvering, and physical defense |
+| Nerve | Perception radius, evasion/defense contribution |
 | Gonad | Reproduction threshold |
+
+Body mass and tissue composition also have functional morphology effects: larger bodies have more inertia (slower turning) and more drag; muscle improves turning and thrust efficiency; mass, muscle, and nerve contribute to defense against predation and failed attacks. These values are derived from biomass, genes, and regulatory state each tick.
 
 The allocation program has two phases. Juveniles bias investment toward gut and
 nerve, which keeps them alive while small. As maturity approaches `devTiming`,
@@ -177,56 +165,59 @@ layer on top of regulation, not a hidden stat penalty.
 
 ### Brain
 
-8 → 6 tanh → 2, fully connected.
+14 → 6 tanh → 3, fully connected.
 
-Inputs are *egocentric* — forward/right relative to heading, not world x/y.
+Inputs are *egocentric* and local — forward/right relative to heading, plus internal and habitat state.
 
 | # | Input | # | Input |
 |:---:|:---|:---:|:---|
-| 0 | Food forward | 4 | Creature right |
-| 1 | Food right | 5 | ATP / threshold |
-| 2 | Food proximity | 6 | Current speed / `speedMax` |
-| 3 | Creature forward | 7 | Bias |
+| 0 | Food forward | 7 | Bias |
+| 1 | Food right | 8 | Gut fill (nutrient / capacity) |
+| 2 | Food proximity | 9 | Local fertility |
+| 3 | Creature forward | 10 | Local hazard |
+| 4 | Creature right | 11 | Nearest food type (flora/fauna) |
+| 5 | ATP / threshold | 12 | Season |
+| 6 | Current speed / `speedMax` | 13 | Threat/prey cue (relative size) |
 
-Outputs: `turn ∈ [−1, 1]`, `thrust ∈ [0, 1]`.
+Outputs: `turn ∈ [−1, 1]`, `thrust ∈ [0, 1]`, `effort ∈ [0, 1]` (exertion/vigilance). Movement is shaped by morphology (turn rate, drag/inertia) and ecological context (resources, hazard, effort), and sprinting costs much more energy than cruising or resting.
 
 > Egocentric inputs matter. With world-frame `dx/dy` the network has no idea which
 > way it is facing, so "steer toward food" is not a linear function it can learn.
 > With forward/right it is one positive weight.
 
 Generation 0 is not pure noise: each genome gets an innate, evolvable
-foraging reflex (food-right → turn, food-ahead → thrust). Mutation can weaken,
-invert, or rewire it like any other weight. In practice this reflex is a
-scaffold: random founder brains without it usually fail to bootstrap, so the
-early dynamics reflect tuning of a hand-seeded behavior as well as search from
-scratch. The reflex is deliberate (otherwise most runs die before selection has
-anything to work with), but ablations and founder sensitivity are worth testing.
+foraging reflex (food-right → turn, food/proximity → thrust, moderate effort;
+idle thrust bias is low so resting is viable). Mutation can weaken, invert, or
+rewire it like any other weight. In practice this reflex is a scaffold: random
+founder brains without it usually fail to bootstrap, so the early dynamics
+reflect tuning of a hand-seeded behavior as well as search from scratch. The
+reflex is deliberate, but ablations and founder sensitivity are worth testing.
 
-### Metabolism
+### Metabolism and diet
 
-Food is **nutrient**, not usable energy. Eating adds up to 28 nutrient to the
-gut, capped by `gutCap = (18 + 14 · size) · gutFactor`. Digestion is
-Michaelis-Menten:
-
-```text
-flux = 5.0 · enzyme · nutrient / (nutrient + 12)
-```
-
-Each unit of digested nutrient yields `1.0` ATP and `0.03` biomass. Building
-biomass costs `5.0` ATP per unit, so growth and reproduction draw on the same
-ATP budget. ATP is also spent on basal metabolism:
+Food is **nutrient**, not usable energy, and comes in two types: **flora**
+(common) and **fauna** (richer, rarer). Eating adds nutrient to the gut, capped
+by `gutCap = (18 + 14 · size) · gutFactor`. Creatures track a recent diet mix.
+Digestion is Michaelis-Menten and diet-dependent:
 
 ```text
-cost = 0.05 + 0.04·mass + 0.12·mass^0.75·speed²
+flux = 5.0 · enzyme · digestibility(diet, enzyme) · nutrient / (nutrient + 12)
 ```
 
-Starvation burns biomass back into ATP at a lossy `3.0` ATP per biomass. A
-creature with no ATP and no body left dies. Because storage is lossy, fat is
-not a free energy multiplier.
+Flora digests readily; fauna yields more ATP/biomass but is harder to process
+without sufficient enzyme. That makes `enzyme` and gut allocation real dietary
+specialization axes. Digested nutrient yields ATP and biomass (building biomass
+costs ATP), so growth and reproduction draw on the same budget. ATP is also
+spent on basal maintenance, senescence, local hazard stress, and movement:
 
-The enzyme gene controls catalyst abundance, so digestive efficiency is
-heritable. It is also regulated, which lets a creature up-regulate digestion
-when the gut is full or ATP is low.
+```text
+cost = basal(age) + 0.04·mass + moveCost·mass^0.75·speed²·sprintPenalty + hazardCost·hazard·mass^0.75
+```
+
+Sprinting (near `speedMax`) is much more expensive than cruising; resting has
+no movement cost. Starvation burns biomass back into ATP at a lossy `3.0` ATP
+per biomass. A creature with no ATP and no body left dies. The enzyme gene is
+heritable and regulated.
 
 ### Growth and reproduction
 
@@ -269,20 +260,24 @@ visual/statistical lens, not something the creatures can sense: nothing in the
 simulation reads a species label. It exists so you can watch lineages diverge,
 compete, and go extinct.
 
-### Predation
+### Predation and defense
 
-Any creature that touches one with less than `1/1.45` of its mass eats it,
-gaining `0.5 × prey ATP + 12 × prey mass`. A predator handles at most one
-prey per tick, so it cannot clear a whole shoal in a single step. Size is the
-trait, so there is no gene "valley" to cross: being big pays immediately and
-being small is immediately risky. Juveniles are especially vulnerable because
-they start at 5% of adult mass.
+A creature can attack one much smaller than itself (`preySizeRatio`), but
+capture is not guaranteed. Success depends on size advantage, speed/condition,
+and prey defense (mass, muscle, and nerve/evasion). Failed attacks cost energy,
+give the prey an escape impulse, and impose handling cooldown on the attacker.
+Successful kills transfer ATP and biomass. Size still matters immediately, but
+morphology and behavior can make prey harder to catch. Juveniles are especially
+vulnerable because they start at 5% of adult mass.
 
-### Food
+### Food, habitat, and seasons
 
-Logistic regrowth toward a cap, mostly clustered around five slowly drifting
-meadows. Patches create territories; uniform scatter does not. Each item is 28
-nutrient and must be digested before it becomes ATP or biomass.
+Logistic regrowth toward a cap, mostly clustered around slowly drifting
+meadows. The world has deterministic spatial fertility and hazard fields, and a
+slow seasonal cycle modulates fertility, hazard, and regrowth. Two food types
+create dietary niches: **flora** (common) and **fauna** (richer, rarer, and
+more enzyme-dependent). Food is nutrient and must be digested before it becomes
+ATP or biomass.
 
 ### Seed bank
 
@@ -298,16 +293,19 @@ Each `World` owns a seeded RNG. A seed fully determines the run, two worlds can
 exist side by side without sharing randomness, and the simulation never calls
 `Math.random`.
 
-Saving writes the full state: seed, RNG position, tick, parameters, patches,
-food, every creature's structural genes, regulatory genome and current
-regulatory activity, neural weights, ATP, nutrient, biomass, and the species
-table. Tissue fractions and cell count are derived from biomass and the genome,
-so they are recomputed deterministically on load. Loading a save continues the
-*same* run, not merely a similar one — `repro.js` checks that two worlds are
-byte-identical 2,000 ticks after a save/load round-trip.
+Saving writes the full state: seed, habitat seed, RNG position, tick, parameters,
+patches, food (including type), every creature's structural genes, regulatory
+genome and current regulatory activity, neural weights, ATP, nutrient, diet,
+biomass, cooldown/state, and the species table. Tissue fractions, morphology
+(turn rate/drag/defense), and cell count are derived from biomass, genes, and
+regulatory state, so they are recomputed deterministically on load. Loading a
+save continues the *same* run, not merely a similar one — `repro.js` checks
+that two worlds are byte-identical 2,000 ticks after a save/load round-trip.
 
-The save format is version 4. Versions 1–3 still load: missing regulatory and
-developmental loci default to neutral, which preserves the old phenotype.
+The save format is version 7. Versions 1–6 still load: missing regulatory,
+developmental, diet/habitat, and expanded brain fields are migrated to
+compatible defaults, and older 8/2 or 12/2 neural networks are migrated into the
+current 14/3 layout.
 
 ```bash
 node repro.js
@@ -321,29 +319,31 @@ All in `DEFAULTS` at the top of `sim.js`.
 
 | Param | Effect |
 |:---|:---|
-| `foodGrowth` | Carrying capacity. This is the main population dial. |
+| `foodGrowth` | Carrying capacity / regrowth rate (modulated by season). Main population dial. |
 | `foodCap` | How much food can exist at once. |
-| `foodEnergy` | Nutrient per meal; changes how cheap growth and reproduction are. |
+| `foodEnergy`, `foodEnergyFauna`, `faunaChance` | Nutrient value and rarity of flora/fauna; creates dietary niches. |
+| `habitatScale`, `habitatStrength`, `hazardStrength` | Spatial fertility/hazard fields (deterministic niches). |
+| `hazardCost`, `senescenceAge`, `senescenceCost` | Habitat stress and age-related maintenance. |
 | `maxPop` | Hard ceiling. If the population pins here, selection is neutral. |
-| `predation` | Turn it off for a pure foraging world (everything shrinks). |
-| `preySizeRatio` | How much bigger you must be to eat someone. |
-| `preyMassGain` | Biomass reward for eating prey; lower = less predator boom. |
-| `basal`, `moveCost` | Maintenance cost; higher = faster turnover, sparser world. |
+| `predation` | Turn it off for a pure foraging world. |
+| `preySizeRatio` | Minimum size advantage to attempt predation. |
+| `preyEnergyGain`, `preyMassGain` | Rewards from a successful kill (capture is probabilistic). |
+| `basal`, `moveCost`, `sprintCost` | Maintenance and movement cost; sprinting near `speedMax` is expensive. |
+| `idleDamp`, `senseDrive` | How much ecological drive/motivation affects movement with brain effort. |
 | `thresholdBase` | Fixed reproduction cost; keeps small bodies from being free. |
-| `digestRate`, `digestKm` | Digestion speed and half-saturation. Lower `digestKm` = faster processing. |
-| `atpYield`, `biomassYield` | ATP and biomass per unit of nutrient. |
+| `digestRate`, `digestKm` | Digestion speed and half-saturation. |
+| `atpYield`, `biomassYield`, `faunaAtpYield`, `faunaBiomassYield` | ATP/biomass yields by diet type. |
+| `faunaDigestBase`, `faunaDigestEnzyme` | How hard fauna is to digest without enzyme specialization. |
 | `growthCost` | ATP per biomass built; growth versus reproduction trade-off. |
-| `catabolism` | ATP recovered per biomass burned while starving. |
+| `catabolism` | ATP recovered per biomass burned while starving (lossy). |
 | `birthMassFrac`, `matureFrac` | How small offspring start and when they can reproduce. |
 | `cellMass` | Biomass per cell; sets the adult cell count. |
 | `regRelax` | How fast regulatory proteins relax toward their network target. |
 | `patchBias` | 0 = uniform food, 1 = fully clustered. |
 | `immigrationBelow` | Extinction insurance. |
 | `sexual` | Default reproduction mode. |
-| `mateRange`, `mateMinEnergy` | How far and how well-fed a mate must be. |
-| `mateRadius` | Compatibility distance; lower = reproductively isolated species. |
-| `speciesRadius` | Cluster tightness for species colouring. |
-| `speciesInterval` | How often species are rebuilt. |
+| `mateRange`, `mateMinEnergy`, `mateRadius` | Mate search, readiness, and genetic compatibility. |
+| `speciesRadius`, `speciesInterval` | Species clustering (visual/statistical lens). |
 
 ---
 

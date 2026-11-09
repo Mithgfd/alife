@@ -597,6 +597,14 @@
       c.cells = 1 + Math.round(df * (adultCells - 1));
       c.threshold = (this.p.thresholdBase + t.reproE * c.targetMass) * gof;
       c.maxEnergy = c.threshold * 1.7;
+
+      // Functional morphology (derived): inertia limits turning for large
+      // bodies; muscle improves maneuver/propulsion; drag rises with size and
+      // falls with muscle; defense combines mass, muscle, and nerve (evasion).
+      const inertia = 0.55 + 0.45 * Math.sqrt(c.mass);
+      c.turnRate = (this.p.maxTurn || 0.28) * (0.65 + 0.7 * mf) / inertia;
+      c.defense = clamp(0.08 + 0.22 * Math.sqrt(c.mass) + 0.35 * mf + 0.15 * nf, 0, 0.85);
+      c.drag = clamp(1.05 - 0.18 * mf + 0.10 * Math.sqrt(c.mass), 0.7, 1.45);
     }
 
     updateRegulation(c, fprox, crowding) {
@@ -1035,7 +1043,7 @@
             const cSpd = Math.sqrt(c.vx * c.vx + c.vy * c.vy);
             const oSpd = Math.sqrt(o.vx * o.vx + o.vy * o.vy);
             const spdAdv = clamp((cSpd - oSpd) / ((c.traits.speedMax || 1) + 0.5) + 0.5, 0, 1);
-            const preyDef = clamp((o.tissues ? o.tissues[1] * 0.5 + o.tissues[2] * 0.5 : 0.25), 0, 1);
+            const preyDef = o.defense != null ? o.defense : clamp((o.tissues ? o.tissues[1] * 0.5 + o.tissues[2] * 0.5 : 0.25), 0, 1);
             const cond = clamp(c.energy / (c.threshold || 1), 0, 1.2);
             let pCatch = clamp(0.18 + 0.22 * (ratio - p.preySizeRatio) + 0.22 * spdAdv + 0.10 * cond - 0.28 * preyDef, 0.05, 0.95);
             if (this.rng.next() < pCatch) {
@@ -1133,14 +1141,15 @@
       const turn = out[0];
       const thrust = (out[1] + 1) * 0.5;
       const effort = (out[2] + 1) * 0.5; // 0..1 brain-controlled exertion
-      c.heading = wrap(c.heading + turn * p.maxTurn, TAU);
+      c.heading = wrap(c.heading + turn * (c.turnRate || p.maxTurn), TAU);
 
       // Move with ecological context: sensed resources raise drive, but effort
       // lets creatures choose to search or conserve; sprinting is costly.
+      // Drag/inertia from morphology shape effective propulsion and turning.
       const driveBase = Math.max(fprox, bestCD < Infinity ? p.senseDrive : 0);
       const motivation = clamp(driveBase + effort * (0.55 - 0.30 * hab.hazard), 0, 1);
       const idleDamp = p.idleDamp != null ? p.idleDamp : 0.10;
-      const tv = thrust * c.traits.speedMax * (idleDamp + (1 - idleDamp) * motivation);
+      const tv = thrust * c.traits.speedMax * (idleDamp + (1 - idleDamp) * motivation) / (c.drag || 1);
       c.vx += (Math.cos(c.heading) * tv - c.vx) * p.steer;
       c.vy += (Math.sin(c.heading) * tv - c.vy) * p.steer;
       c.x = wrap(c.x + c.vx, this.w);
@@ -1444,7 +1453,7 @@
     stats() {
       const n = this.creatures.length;
       let size = 0, speed = 0, sense = 0, mut = 0, repro = 0, gen = 0, energy = 0, kills = 0;
-      let enzyme = 0, biomass = 0, maturity = 0, nutrient = 0, regActivity = 0, diet = 0;
+      let enzyme = 0, biomass = 0, maturity = 0, nutrient = 0, regActivity = 0, diet = 0, defense = 0;
       let cells = 0, gut = 0, muscle = 0, nerve = 0, gonad = 0;
       for (let i = 0; i < n; i++) {
         const c = this.creatures[i];
@@ -1456,6 +1465,7 @@
         repro += t.reproE;
         enzyme += t.enzyme;
         diet += c.diet || 0;
+        defense += c.defense || 0;
         for (let j = 0; j < REG_N; j++) regActivity += Math.abs(c.reg[j]);
         cells += c.cells;
         gut += c.tissues[0];
@@ -1483,6 +1493,7 @@
         faunaFood,
         season: 0.5 + 0.5 * Math.sin(this.tick * 0.0017),
         diet: diet / d,
+        defense: defense / d,
         births: this.births,
         deaths: this.deaths,
         immigrants: this.immigrants,
