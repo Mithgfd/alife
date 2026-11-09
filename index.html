@@ -143,9 +143,16 @@
   }
   body.world-only header,
   body.world-only #toolbar,
-  body.world-only #species-panel,
   body.world-only #help-modal { display: none !important; }
-  body.world-only #btn-species-fab { display: none; }
+  body.world-only #btn-species-fab { display: block; bottom: 14px; left: 14px; }
+  body.world-only #species-panel {
+    display: none;
+    position: fixed;
+    left: 14px; right: 14px; bottom: 64px;
+    max-width: none; max-height: 50vh; overflow: auto;
+    z-index: 6;
+  }
+  body.world-only #species-panel.open { display: block; }
   body.world-only #btn-exit-world { display: block; }
   body.world-only { padding: 0; gap: 0; background: #07090d; justify-content: center; }
   body.world-only #stage { position: fixed; inset: 0; width: 100vw; height: 100vh; margin: 0; }
@@ -205,7 +212,9 @@
     border-radius: 8px;
     padding: 8px 10px;
     font-size: 11px;
+    cursor: pointer;
   }
+  .species-card:hover { border-color: #3a4254; }
   .species-card.alive { border-color: #2f6f5e; }
   .species-head {
     display: flex;

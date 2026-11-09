@@ -29,6 +29,8 @@ let showPanelDetails = false;
 let showHelp = false;
 let worldOnly = false;
 let viewScale = 1, viewOx = 0, viewOy = 0;
+let camX = W / 2, camY = H / 2, camZ = 1;
+let focusSpeciesId = 0;
 let flashMsg = '';
 let flashUntil = 0;
 
@@ -72,6 +74,7 @@ function resetWorld(seed) {
   speciesHist = [];
   sampleClock = 0;
   catalogClock = 0;
+  clearCamera();
   syncUI();
   renderSpeciesCatalog();
   try {
@@ -102,15 +105,18 @@ function draw() {
   if (selected && (selected.dead || selected.energy <= 0)) selected = null;
 
   background(worldOnly ? color(226, 28, 8) : color(226, 24, 7));
+  const vt = getWorldTransform();
   push();
-  if (worldOnly) {
-    translate(viewOx, viewOy);
-    scale(viewScale);
-    drawWorld();
-  } else {
-    translate(PAD, PAD);
-    drawWorld();
+  if (!worldOnly) {
+    drawingContext.save();
+    drawingContext.beginPath();
+    drawingContext.rect(PAD, PAD, W, H);
+    drawingContext.clip();
   }
+  translate(vt.ox, vt.oy);
+  scale(vt.scale);
+  drawWorld();
+  if (!worldOnly) drawingContext.restore();
   pop();
   if (!worldOnly) drawPanel();
   else if (selected) drawWorldOnlyInspector(selected);
@@ -700,14 +706,10 @@ function mousePressed() {
     showPanelDetails = !showPanelDetails;
     return;
   }
-  let wx, wy;
-  if (worldOnly) {
-    wx = (mouseX - viewOx) / viewScale;
-    wy = (mouseY - viewOy) / viewScale;
-  } else {
-    wx = mouseX - PAD;
-    wy = mouseY - PAD;
-  }
+  const vt = getWorldTransform();
+  const wx = (mouseX - vt.ox) / vt.scale;
+  const wy = (mouseY - vt.oy) / vt.scale;
+  if (!worldOnly && (mouseX < PAD || mouseX >= PAD + W || mouseY < PAD || mouseY >= PAD + H)) return;
   if (wx < 0 || wx >= W || wy < 0 || wy >= H) return;
 
   let best = null;
@@ -720,6 +722,7 @@ function mousePressed() {
     if (d < bestD) { bestD = d; best = c; }
   }
   selected = best;
+  if (!best && focusSpeciesId) clearCamera();
 }
 
 function touchStarted() {
@@ -728,6 +731,53 @@ function touchStarted() {
 }
 
 // -------------------------------------------------------------------- UI --
+function clearCamera() {
+  camX = W / 2; camY = H / 2; camZ = 1; focusSpeciesId = 0;
+}
+
+function focusOnSpecies(id) {
+  focusSpeciesId = id | 0;
+  updateCameraFocus();
+  if (focusSpeciesId) {
+    const rec = world && world.allSpecies ? world.allSpecies.find((r) => r.id === focusSpeciesId) : null;
+    flash('focused species #' + focusSpeciesId + (rec && rec.count === 0 ? ' (extinct view)' : ''));
+  }
+}
+
+function updateCameraFocus() {
+  if (!focusSpeciesId || !world) return;
+  let best = null;
+  for (let i = 0; i < world.creatures.length; i++) {
+    const c = world.creatures[i];
+    if (c.species === focusSpeciesId) { best = c; break; }
+  }
+  if (best) {
+    camX = best.x;
+    camY = best.y;
+    camZ = worldOnly ? 2.8 : 2.4;
+  } else {
+    // no living member: keep last camera but mark; don't snap away abruptly
+    camZ = worldOnly ? 2.2 : 2.0;
+  }
+}
+
+function getWorldTransform() {
+  // returns {ox, oy, scale} mapping world coords -> canvas coords
+  if (worldOnly) {
+    if (focusSpeciesId) {
+      updateCameraFocus();
+      const z = viewScale * camZ;
+      return { ox: width / 2 - camX * z, oy: height / 2 - camY * z, scale: z };
+    }
+    return { ox: viewOx, oy: viewOy, scale: viewScale };
+  }
+  if (focusSpeciesId) {
+    updateCameraFocus();
+    return { ox: PAD + W / 2 - camX * camZ, oy: PAD + H / 2 - camY * camZ, scale: camZ };
+  }
+  return { ox: PAD, oy: PAD, scale: 1 };
+}
+
 function updateWorldOnlyView() {
   if (!worldOnly || typeof resizeCanvas !== 'function') return;
   const w = Math.max(1, window.innerWidth || W);
@@ -747,6 +797,7 @@ function setWorldOnly(on) {
     if (worldOnly) updateWorldOnlyView();
     else resizeCanvas(W + PANEL + PAD * 3, PH + PAD * 2);
   }
+  if (focusSpeciesId) updateCameraFocus();
   const exit = document.getElementById('btn-exit-world');
   if (exit) exit.style.display = worldOnly ? 'block' : '';
   syncUI();
@@ -921,6 +972,8 @@ function renderSpeciesCatalog() {
     const tr = world.speciesTraits ? world.speciesTraits(sp) : {};
     const card = document.createElement('div');
     card.className = 'species-card' + (sp.count > 0 ? ' alive' : '');
+    card.title = 'Focus view on species #' + sp.id;
+    card.onclick = () => focusOnSpecies(sp.id);
 
     const head = document.createElement('div');
     head.className = 'species-head';
@@ -1002,6 +1055,7 @@ function loadRun(e) {
       speciesHist = [];
       sampleClock = 0;
       catalogClock = 0;
+      clearCamera();
       paused = false;
       syncUI();
       renderSpeciesCatalog();
