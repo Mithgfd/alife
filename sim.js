@@ -281,7 +281,10 @@
     // being strictly optimal.
     basal: 0.05,
     basalMass: 0.04,
-    moveCost: 0.12,
+    moveCost: 0.10,
+    sprintCost: 2.5,      // extra cost at full speed (sprint); cruise is much cheaper
+    idleDamp: 0.10,       // thrust multiplier when no food/creature is sensed (wait/stop)
+    senseDrive: 0.35,     // movement drive when a creature is sensed but no food is
     thresholdBase: 30,
 
     // Digestion: food is nutrient, not usable energy. The enzyme gene sets the
@@ -441,17 +444,18 @@
       // Innate foraging reflex, so generation 0 is not a coin flip that dies
       // before it can reproduce. Hidden unit 0 steers toward food (food-right
       // -> turn); hidden unit 1 drives thrust from food-ahead + proximity.
-      // These weights are ordinary genes: mutation can weaken, invert or
-      // rewire them like anything else.
+      // Low/no thrust bias means founders stop when nothing is sensed; the
+      // foraging drive and sprint cost reinforce waiting/cruising over
+      // constant fast movement. These weights are ordinary genes.
       const jitter = () => 0.6 + this.rng.next() * 0.8;
       w[0 * IN + 1] = 1.5 * jitter();          // food right -> hid 0
       w[48 + 0] = 0;
       w[54 + 0] = 1.8 * jitter();              // hid 0 -> turn
-      w[1 * IN + 0] = 1.5 * jitter();          // food ahead -> hid 1
-      w[1 * IN + 2] = 1.0 * jitter();          // food proximity -> hid 1
+      w[1 * IN + 0] = 1.8 * jitter();          // food ahead -> hid 1
+      w[1 * IN + 2] = 1.4 * jitter();          // food proximity -> hid 1
       w[48 + 1] = 0;
-      w[54 + HID + 1] = 1.5 * jitter();        // hid 1 -> thrust
-      w[IN * HID + HID + HID * OUT + 1] = 0.6; // thrust bias
+      w[54 + HID + 1] = 1.6 * jitter();        // hid 1 -> thrust
+      w[IN * HID + HID + HID * OUT + 1] = -0.2; // thrust bias (rest when idle)
       genes.rg = randomRg(this.rng);
       return { genes, w };
     }
@@ -1031,7 +1035,11 @@
       const thrust = (out[1] + 1) * 0.5;
       c.heading = wrap(c.heading + turn * p.maxTurn, TAU);
 
-      const tv = thrust * c.traits.speedMax;
+      // Move only when there is reason to: stop/wait when no resources sensed,
+      // cruise toward sensed food/creatures, sprint costs much more energy.
+      const drive = Math.max(fprox, bestCD < Infinity ? p.senseDrive : 0);
+      const idleDamp = p.idleDamp != null ? p.idleDamp : 0.10;
+      const tv = thrust * c.traits.speedMax * (idleDamp + (1 - idleDamp) * clamp(drive, 0, 1));
       c.vx += (Math.cos(c.heading) * tv - c.vx) * p.steer;
       c.vy += (Math.sin(c.heading) * tv - c.vy) * p.steer;
       c.x = wrap(c.x + c.vx, this.w);
@@ -1039,7 +1047,10 @@
       c.age++;
 
       const v2 = c.vx * c.vx + c.vy * c.vy;
-      c.energy -= p.basal + p.basalMass * c.mass + p.moveCost * c.mass075 * v2;
+      const spd = Math.sqrt(v2);
+      const sprint = c.traits.speedMax > 1e-6 ? clamp(spd / c.traits.speedMax, 0, 1) : 0;
+      const sprintCost = p.sprintCost != null ? p.sprintCost : 2.5;
+      c.energy -= p.basal + p.basalMass * c.mass + p.moveCost * c.mass075 * v2 * (1 + sprintCost * sprint * sprint);
 
       // ---- eat (one item per tick, nearest first) ----
       // Food is nutrient, not usable energy. A full gut means the creature
