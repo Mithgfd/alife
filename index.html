@@ -135,13 +135,37 @@
     padding: 12px 14px;
   }
   #species-panel.open { display: block; }
+  .species-panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+  }
   #species-panel h2 {
-    margin: 0 0 10px;
+    margin: 0;
     font-size: 11px;
     font-weight: 600;
     letter-spacing: 0.12em;
     text-transform: uppercase;
     color: var(--dim);
+  }
+  .sort-control {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    color: var(--dim);
+  }
+  .sort-control select {
+    font: inherit;
+    font-size: 11px;
+    color: var(--ink);
+    background: #141820;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 4px 8px;
   }
   #species-list {
     display: grid;
@@ -234,7 +258,17 @@
   </div>
 
   <div id="species-panel" aria-hidden="true">
-    <h2 id="species-title">Species catalog</h2>
+    <div class="species-panel-head">
+      <h2 id="species-title">Species catalog</h2>
+      <label class="sort-control" for="species-sort">sort
+        <select id="species-sort">
+          <option value="id">id (normal)</option>
+          <option value="speed">top speed</option>
+          <option value="size">top size</option>
+          <option value="sense">top sense</option>
+        </select>
+      </label>
+    </div>
     <div id="species-list"></div>
   </div>
 

@@ -23,6 +23,7 @@ let speciesHist = [];
 let sampleClock = 0;
 let catalogClock = 0;
 let showSpeciesCatalog = false;
+let speciesSort = 'id';
 let flashMsg = '';
 let flashUntil = 0;
 
@@ -572,6 +573,14 @@ function setupUI() {
   };
   if ($('btn-species')) $('btn-species').onclick = toggleSpecies;
   if ($('btn-species-fab')) $('btn-species-fab').onclick = toggleSpecies;
+  const speciesSortSel = $('species-sort');
+  if (speciesSortSel) {
+    speciesSortSel.value = speciesSort;
+    speciesSortSel.onchange = () => {
+      speciesSort = speciesSortSel.value || 'id';
+      renderSpeciesCatalog();
+    };
+  }
   $('seed-label').onclick = shareLink;
 }
 
@@ -600,11 +609,22 @@ function renderSpeciesCatalog() {
   const list = document.getElementById('species-list');
   const title = document.getElementById('species-title');
   if (!list || !world) return;
-  const all = (world.allSpecies || []).slice().sort((a, b) => {
-    const da = a.count > 0 ? 0 : 1;
-    const db = b.count > 0 ? 0 : 1;
-    if (da !== db) return da - db;
-    if (b.peak !== a.peak) return b.peak - a.peak;
+  const allRaw = (world.allSpecies || []).slice();
+  const traitOf = (rec, key) => {
+    const tr = world.speciesTraits ? world.speciesTraits(rec) : {};
+    return tr[key] != null ? tr[key] : -Infinity;
+  };
+  const all = allRaw.sort((a, b) => {
+    if (speciesSort === 'speed') {
+      const d = traitOf(b, 'speedMax') - traitOf(a, 'speedMax');
+      if (d) return d;
+    } else if (speciesSort === 'size') {
+      const d = traitOf(b, 'size') - traitOf(a, 'size');
+      if (d) return d;
+    } else if (speciesSort === 'sense') {
+      const d = traitOf(b, 'sense') - traitOf(a, 'sense');
+      if (d) return d;
+    }
     return a.id - b.id;
   });
   const alive = all.filter((s) => s.count > 0).length;
