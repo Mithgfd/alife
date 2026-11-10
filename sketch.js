@@ -123,14 +123,39 @@ function draw() {
   stepCamera();
   background(worldOnly ? color(226, 28, 8) : color(226, 24, 7));
   if (view3D) {
-    ensure3D();
-    drawWorld3D();
-    if (!worldOnly) {
-      image(g3d, PAD, PAD, W, H);
-      drawPanel();
-    } else {
-      image(g3d, 0, 0, width, height);
-      if (selected) drawWorldOnlyInspector(selected);
+    try {
+      ensure3D();
+      if (!g3d) throw new Error('3D unavailable');
+      drawWorld3D();
+      if (!worldOnly) {
+        image(g3d, PAD, PAD, W, H);
+        drawPanel();
+      } else {
+        image(g3d, 0, 0, width, height);
+        if (selected) drawWorldOnlyInspector(selected);
+      }
+    } catch (err) {
+      console.error(err);
+      view3D = false;
+      if (g3d && g3d.remove) { try { g3d.remove(); } catch (_) {} }
+      g3d = null;
+      flash('3D view unavailable: ' + (err && err.message ? err.message : 'error'));
+      syncUI();
+      const vt = getWorldTransform();
+      push();
+      if (!worldOnly) {
+        drawingContext.save();
+        drawingContext.beginPath();
+        drawingContext.rect(PAD, PAD, W, H);
+        drawingContext.clip();
+      }
+      translate(vt.ox, vt.oy);
+      scale(vt.scale);
+      drawWorld();
+      if (!worldOnly) drawingContext.restore();
+      pop();
+      if (!worldOnly) drawPanel();
+      else if (selected) drawWorldOnlyInspector(selected);
     }
   } else {
     const vt = getWorldTransform();
@@ -534,9 +559,9 @@ function drawWorld3D() {
   const camDist = 520;
   g.perspective(fov, g.width / g.height, 5, 3000);
   g.camera(0, -320, camDist, 0, 40, 0, 0, 1, 0);
-  g.ambientLight(0, 0, 55);
-  g.directionalLight(0, 0, 90, 0.2, 0.6, -1);
-  g.directionalLight(30, 15, 35, -0.6, 0.3, -0.5);
+  g.ambientLight(160);
+  g.directionalLight(255, 255, 255, 0.2, 0.6, -1);
+  g.directionalLight(120, 120, 130, -0.6, 0.3, -0.5);
 
   // ground
   g.push();
