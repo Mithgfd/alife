@@ -347,31 +347,52 @@ All in `DEFAULTS` at the top of `sim.js`.
 
 ---
 
-## 07 — Headless tools
+## 07 — Headless tools and evidence
 
 The whole point of keeping `sim.js` free of p5 is that you can measure the
 dynamics instead of squinting at the canvas.
 
 ```bash
-node test.js 40000            # one run, prints summary; exits 1 on extinction
-SEED=7 node test.js           # a different world
-node repro.js                 # determinism, RNG isolation, save/load round-trip
-node sweep.js                 # configs × seeds, prints a comparison table
-node validate.js              # 5 seeds × 40k ticks; reports immigrant dependence
-STRICT=1 node validate.js     # also fail on heavy seed-bank dependence
-node log.js > run.csv         # per-sample CSV for plotting traits over time
-node ablate.js                # neutral regulation/fixed allocation baselines
-node smoke.js                 # loads the page in headless chromium, checks the UI
+node test.js 40000                      # one run, prints summary; exits 1 on extinction
+SEED=7 node test.js                     # a different world
+node repro.js                           # determinism, RNG isolation, save/load round-trip
+node sweep.js                           # configs × seeds, prints a comparison table
+node validate.js                        # 5 seeds × 40k ticks; reports immigrant dependence
+IMMIGRATION_BELOW=0 node validate.js    # no seed bank: tests evolutionary persistence
+STRICT=1 node validate.js               # also fail on heavy seed-bank dependence
+node log.js > run.csv                   # per-sample CSV for plotting traits over time
+IMMIGRATION_BELOW=0 node log.js > native.csv
+node ablate.js                          # compare layers against neutral/random baselines
+IMMIGRATION_BELOW=0 node ablate.js      # ablations without seed-bank rescue
+node smoke.js                           # loads the page in headless chromium, checks the UI
 ```
 
 `test.js`, `repro.js`, `sweep.js`, `validate.js`, `log.js`, and `ablate.js` are
 seed-driven, so results are reproducible. `smoke.js` needs `chromium` on
 `PATH`.
 
+**Seed bank / ancestry.** By default `immigrationBelow` injects random genomes
+when the population crashes, which can mask extinction. `validate.js` and
+`log.js` report `native%` / `immDesc` (fraction of the living population that
+descends from injected immigrants). Run with `IMMIGRATION_BELOW=0` to test
+whether lineages persist by evolution and reproduction alone.
+
+**Drift control.** `hue` is a neutral marker (no fitness effect). `log.js`
+writes `hue` (circular mean) and `hueSpread` alongside functional traits
+(`size`, `speed`, `sense`, `enzyme`, `diet`, `defense`, tissues, ...). If a
+functional trait shifts much more than `hue` drifts, that is evidence of
+selection; shifts comparable to `hue` are consistent with drift.
+
+**Layer ablations.** `ablate.js` compares `default` against `no-reflex`
+(founders/immigrants start with fully random brain weights), `scrambled-brain`
+(no heritable/adaptive control), `neutral-rg` (regulation forced to structural
+expression), and `fixed-alloc` (even adult body plan). If a variant performs
+about as well as default (population, persistence, native fraction, traits),
+that layer may not be contributing much in the current environment. Use longer
+`TICKS` and multiple `SEEDS` for meaningful comparisons.
+
 `validate.js` exits 1 if any run goes extinct (and, with `STRICT=1`, if a run is
-pinned at `maxPop` or remains seed-bank dependent after burn-in). It reports
-immigrant counts and a coarse dependence marker so founder/immigration fragility
-is visible rather than hidden.
+pinned at `maxPop` or remains seed-bank dependent after burn-in).
 
 ---
 

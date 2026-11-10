@@ -655,6 +655,7 @@
         speciesHue: 0,
         matedTick: -1,
         huntCooldown: 0,
+        origin: 0, // 0 founder/native lineage, 1 immigrant lineage (propagates)
         nutrient: 0,
         diet: 0, // EMA of food type eaten: 0 flora, 1 fauna
         biomass: targetMass,
@@ -703,6 +704,7 @@
         angle
       );
       child.energy = parent.threshold * p.reproShare;
+      child.origin = parent.origin ? 1 : 0;
       return child;
     }
 
@@ -738,6 +740,7 @@
         angle
       );
       child.energy = Math.min(a.threshold, b.threshold) * p.reproShare;
+      child.origin = (a.origin || b.origin) ? 1 : 0;
       return child;
     }
 
@@ -989,7 +992,9 @@
       if (list.length < p.immigrationBelow) {
         const chance = p.immigrationRate * (1 - list.length / p.immigrationBelow);
         if (this.rng.next() < chance) {
-          list.push(this.randomCreature());
+          const imm = this.randomCreature();
+          imm.origin = 1;
+          list.push(imm);
           this.immigrants++;
         }
       }
@@ -1306,6 +1311,7 @@
           age: c.age,
           matedTick: c.matedTick | 0,
           huntCooldown: c.huntCooldown | 0,
+          origin: c.origin | 0,
           species: c.species,
           speciesHue: c.speciesHue,
           // Current regulatory state. Without it a resumed creature would
@@ -1376,6 +1382,7 @@
         cr.age = c.age | 0;
         cr.matedTick = c.matedTick == null ? -1 : (c.matedTick | 0);
         cr.huntCooldown = c.huntCooldown | 0;
+        cr.origin = c.origin | 0;
         cr.species = c.species | 0;
         cr.speciesHue = +c.speciesHue || 0;
         cr.diet = Number.isFinite(c.diet) ? clamp(+c.diet, 0, 1) : 0;
@@ -1453,7 +1460,8 @@
     stats() {
       const n = this.creatures.length;
       let size = 0, speed = 0, sense = 0, mut = 0, repro = 0, gen = 0, energy = 0, kills = 0;
-      let enzyme = 0, biomass = 0, maturity = 0, nutrient = 0, regActivity = 0, diet = 0, defense = 0;
+      let enzyme = 0, biomass = 0, maturity = 0, nutrient = 0, regActivity = 0, diet = 0, defense = 0, immDesc = 0;
+      let hueSin = 0, hueCos = 0;
       let cells = 0, gut = 0, muscle = 0, nerve = 0, gonad = 0;
       for (let i = 0; i < n; i++) {
         const c = this.creatures[i];
@@ -1466,6 +1474,9 @@
         enzyme += t.enzyme;
         diet += c.diet || 0;
         defense += c.defense || 0;
+        if (c.origin) immDesc++;
+        const ha = (c.genes.hue || 0) * TAU;
+        hueSin += Math.sin(ha); hueCos += Math.cos(ha);
         for (let j = 0; j < REG_N; j++) regActivity += Math.abs(c.reg[j]);
         cells += c.cells;
         gut += c.tissues[0];
@@ -1486,6 +1497,9 @@
       }
       let faunaFood = 0;
       for (let i = 0; i < this.food.length; i++) if (this.food[i].type) faunaFood++;
+      const hR = Math.sqrt((hueSin / d) * (hueSin / d) + (hueCos / d) * (hueCos / d));
+      let hueMean = Math.atan2(hueSin / d, hueCos / d) / TAU;
+      if (hueMean < 0) hueMean += 1;
       return {
         tick: this.tick,
         pop: n,
@@ -1494,9 +1508,13 @@
         season: 0.5 + 0.5 * Math.sin(this.tick * 0.0017),
         diet: diet / d,
         defense: defense / d,
+        hue: hueMean,
+        hueSpread: 1 - hR, // 0 concentrated, 1 uniform/drifted
         births: this.births,
         deaths: this.deaths,
         immigrants: this.immigrants,
+        immDesc: immDesc / d,
+        native: 1 - immDesc / d,
         avgGen: gen / d,
         maxGen: n ? this.creatures.reduce((m, c) => (c.gen > m ? c.gen : m), 0) : 0,
         size: size / d,
