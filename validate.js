@@ -16,6 +16,7 @@ const TICKS = parseInt(process.env.TICKS || '40000', 10);
 const SEEDS = (process.env.SEEDS || '1,2,3,4,5').split(',').map(Number);
 const SEXUAL = process.env.SEXUAL === undefined ? undefined : process.env.SEXUAL === '1';
 const IMMIGRATION_BELOW = process.env.IMMIGRATION_BELOW === undefined ? undefined : parseFloat(process.env.IMMIGRATION_BELOW);
+const REALISTIC = process.env.REALISTIC === '1';
 const STRICT = process.env.STRICT === '1';
 const burn = Math.floor(TICKS * 0.2);
 
@@ -24,7 +25,8 @@ console.log(`defaults: ${JSON.stringify({
   maxPop: A.DEFAULTS.maxPop,
   predation: A.DEFAULTS.predation,
   sexual: SEXUAL === undefined ? A.DEFAULTS.sexual : SEXUAL,
-  immigrationBelow: IMMIGRATION_BELOW === undefined ? A.DEFAULTS.immigrationBelow : IMMIGRATION_BELOW,
+  immigrationBelow: REALISTIC ? 0 : (IMMIGRATION_BELOW === undefined ? A.DEFAULTS.immigrationBelow : IMMIGRATION_BELOW),
+  realistic: REALISTIC,
   strict: STRICT,
 })}\n`);
 
@@ -34,6 +36,7 @@ for (const seed of SEEDS) {
   const opts = { seed };
   if (SEXUAL !== undefined) opts.sexual = SEXUAL;
   if (IMMIGRATION_BELOW !== undefined) opts.immigrationBelow = IMMIGRATION_BELOW;
+  if (REALISTIC) opts.realisticMode = true;
   const w = new A.World(opts);
   let mn = Infinity, mx = 0, sum = 0, n = 0, zero = 0, pinned = 0, low = 0;
   let immAtBurn = 0;

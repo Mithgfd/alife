@@ -20,10 +20,12 @@ const SAMPLE = Math.max(1, parseInt(process.env.SAMPLE || '100', 10));
 const SEED = parseInt(process.env.SEED || '1', 10);
 const SEXUAL = process.env.SEXUAL === undefined ? undefined : process.env.SEXUAL === '1';
 const IMMIGRATION_BELOW = process.env.IMMIGRATION_BELOW === undefined ? undefined : parseFloat(process.env.IMMIGRATION_BELOW);
+const REALISTIC = process.env.REALISTIC === '1';
 
 const opts = { seed: SEED };
 if (SEXUAL !== undefined) opts.sexual = SEXUAL;
 if (IMMIGRATION_BELOW !== undefined) opts.immigrationBelow = IMMIGRATION_BELOW;
+if (REALISTIC) opts.realisticMode = true;
 const w = new A.World(opts);
 
 const cols = [

@@ -356,6 +356,19 @@ function drawWorld() {
     noStroke();
   }
 
+  // compost/detritus (matter recycling)
+  if (world.detritus && world.detritus.length) {
+    noStroke();
+    for (let i = 0; i < world.detritus.length; i++) {
+      const d = world.detritus[i];
+      const a = clamp01((d.n || 0) / 30);
+      if (a <= 0) continue;
+      fill(35, 25, 28, 8 + 18 * a);
+      const dx = wx(d), dy = wy(d);
+      circle(dx, dy, 2.5 + 4 * a);
+    }
+  }
+
   // food — varied procedural models
   for (let i = 0; i < world.food.length; i++) {
     const f = world.food[i];

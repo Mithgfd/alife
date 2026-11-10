@@ -44,6 +44,7 @@ alife/
   validate.js  long-horizon check with immigrant-dependence reporting
   log.js       per-sample CSV of population and trait means
   ablate.js    compare regulation/allocation against neutral baselines
+  audit.js     approximate matter/energy accounting diagnostic
   smoke.js     headless browser smoke test (needs chromium)
   LICENSE      MIT
 ```
@@ -268,18 +269,25 @@ A creature can attack one much smaller than itself (`preySizeRatio`), but
 capture is not guaranteed. Success depends on size advantage, speed/condition,
 and prey defense (mass, muscle, and nerve/evasion). Failed attacks cost energy,
 give the prey an escape impulse, and impose handling cooldown on the attacker.
-Successful kills transfer ATP and biomass. Size still matters immediately, but
-morphology and behavior can make prey harder to catch. Juveniles are especially
-vulnerable because they start at 5% of adult mass.
+A successful kill provides an immediate share to the predator and leaves
+**carcass remains** (scavengeable fauna) so predation and scavenging recycle
+matter instead of deleting it. Size still matters immediately, but morphology
+and behavior can make prey harder to catch. Juveniles are especially vulnerable
+because they start at 5% of adult mass.
 
-### Food, habitat, and seasons
+### Food, habitat, and the matter loop
 
-Logistic regrowth toward a cap, mostly clustered around slowly drifting
-meadows. The world has deterministic spatial fertility and hazard fields, and a
-slow seasonal cycle modulates fertility, hazard, and regrowth. Two food types
-create dietary niches: **flora** (common) and **fauna** (richer, rarer, and
-more enzyme-dependent). Food is nutrient and must be digested before it becomes
-ATP or biomass.
+The world recycles matter: deaths (and leftover kill remains) become **carcasses**
+(edible fauna food) and **compost/detritus** that enriches local fertility before
+decaying. Flora behaves more like plants — new growth is biased toward existing
+flora and compost-rich ground, so overgrazing and recovery create local dynamics
+instead of purely fixed random spawns. Some fauna also appears in the world, but
+carcasses make scavenging a real strategy. Regrowth is bounded and modulated by
+deterministic habitat fertility/hazard and a slow seasonal cycle. Food is
+nutrient and must be digested before it becomes ATP or biomass; metabolism is
+dissipative (movement, sensing, maintenance, hazard, lossy catabolism), so
+energy is not created from nothing. Use `node audit.js` for an approximate
+input/storage ledger.
 
 ### Seed bank
 
@@ -296,18 +304,19 @@ exist side by side without sharing randomness, and the simulation never calls
 `Math.random`.
 
 Saving writes the full state: seed, habitat seed, RNG position, tick, parameters,
-patches, food (including type), every creature's structural genes, regulatory
-genome and current regulatory activity, neural weights, ATP, nutrient, diet,
-biomass, cooldown/state, and the species table. Tissue fractions, morphology
-(turn rate/drag/defense), and cell count are derived from biomass, genes, and
-regulatory state, so they are recomputed deterministically on load. Loading a
-save continues the *same* run, not merely a similar one — `repro.js` checks
-that two worlds are byte-identical 2,000 ticks after a save/load round-trip.
+patches, food (including type), detritus/compost, every creature's structural
+genes, regulatory genome and current regulatory activity, neural weights, ATP,
+nutrient, diet, alertness, biomass, cooldown/state, and the species table.
+Tissue fractions, morphology (turn rate/drag/defense), and cell count are
+derived from biomass, genes, and regulatory state, so they are recomputed
+deterministically on load. Loading a save continues the *same* run, not merely
+a similar one — `repro.js` checks that two worlds are byte-identical 2,000
+ticks after a save/load round-trip.
 
-The save format is version 7. Versions 1–6 still load: missing regulatory,
-developmental, diet/habitat, and expanded brain fields are migrated to
-compatible defaults, and older 8/2 or 12/2 neural networks are migrated into the
-current 14/3 layout.
+The save format is version 8. Versions 1–7 still load: missing regulatory,
+developmental, diet/habitat, detritus, alertness, and expanded brain fields are
+migrated to compatible defaults, and older 8/2 or 12/2 neural networks are
+migrated into the current 14/3 layout.
 
 ```bash
 node repro.js
@@ -362,11 +371,13 @@ node repro.js                           # determinism, RNG isolation, save/load 
 node sweep.js                           # configs × seeds, prints a comparison table
 node validate.js                        # 5 seeds × 40k ticks; reports immigrant dependence
 IMMIGRATION_BELOW=0 node validate.js    # no seed bank: tests evolutionary persistence
+REALISTIC=1 node validate.js            # realistic mode: no seed bank, no pop cap
 STRICT=1 node validate.js               # also fail on heavy seed-bank dependence
 node log.js > run.csv                   # per-sample CSV for plotting traits over time
-IMMIGRATION_BELOW=0 node log.js > native.csv
+REALISTIC=1 node log.js > native.csv    # log without seed-bank/cap rescue
 node ablate.js                          # compare layers against neutral/random baselines
-IMMIGRATION_BELOW=0 node ablate.js      # ablations without seed-bank rescue
+REALISTIC=1 node ablate.js              # ablations in realistic mode
+node audit.js                           # approximate matter/energy accounting diagnostic
 node smoke.js                           # loads the page in headless chromium, checks the UI
 ```
 
@@ -374,11 +385,14 @@ node smoke.js                           # loads the page in headless chromium, c
 seed-driven, so results are reproducible. `smoke.js` needs `chromium` on
 `PATH`.
 
-**Seed bank / ancestry.** By default `immigrationBelow` injects random genomes
-when the population crashes, which can mask extinction. `validate.js` and
-`log.js` report `native%` / `immDesc` (fraction of the living population that
-descends from injected immigrants). Run with `IMMIGRATION_BELOW=0` to test
-whether lineages persist by evolution and reproduction alone.
+**Seed bank / ancestry / realistic mode.** By default `immigrationBelow` injects
+random genomes when the population crashes and `maxPop` caps size, which can
+mask extinction and limit dynamics. `validate.js` and `log.js` report `native%`
+/ `immDesc` (fraction of the living population that descends from injected
+immigrants). Run with `IMMIGRATION_BELOW=0` or `REALISTIC=1` (disables seed bank
+and removes the hard population cap) to test whether lineages persist by
+evolution and reproduction alone. Use `audit.js` to inspect the approximate
+matter/energy ledger.
 
 **Drift control.** `hue` is a neutral marker (no fitness effect). `log.js`
 writes `hue` (circular mean) and `hueSpread` alongside functional traits

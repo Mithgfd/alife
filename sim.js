@@ -296,11 +296,22 @@
     foodRadius: 2.2,
     seedFood: 0.7,
 
-    // Food is patchy: most spawns cluster around a few slowly drifting
-    // "meadows". Uniform scatter is boring; patchiness creates territories.
+    // Food is patchy and plant-like: flora can spread near existing flora and
+    // fertile/compost-rich ground; overgrazing depletes local sources until recovery.
     patchCount: 5,
     patchSpread: 120,
     patchBias: 0.7,
+    floraSpread: 0.55,     // chance a new flora spawns near existing flora/compost
+    floraSpreadRadius: 55,
+
+    // Matter/energy loop: deaths leave carcasses (scavengeable fauna food) and
+    // compost (enriches local fertility). Bodies recycle rather than vanish.
+    detritusCap: 260,
+    carcassYield: 0.55,    // fraction of dead matter -> carcass food
+    compostYield: 0.45,    // fraction -> compost/soil enrichment
+    detritusDecay: 0.0025, // compost decay per tick
+    predationLeave: 0.7,   // fraction of prey remains left after a successful kill
+    realisticMode: false,  // if true: disable seed bank and pop cap (set via opts)
 
     // Habitat: deterministic spatial fertility/hazard fields (sampled by x,y).
     // Fertility boosts local regrowth and flora quality; hazard adds stress.
@@ -429,6 +440,7 @@
       this.tick = 0;
       this.nextId = 1;
       this.food = [];
+      this.detritus = []; // compost/soil enrichment points
       this.creatures = [];
       this.born = [];
       this.spawnAcc = 0;
@@ -471,6 +483,10 @@
         });
       }
 
+      if (p.realisticMode) {
+        p.immigrationBelow = 0;
+        p.maxPop = Math.max(p.maxPop, 100000);
+      }
       for (let i = 0; i < p.startPop; i++) this.creatures.push(this.randomCreature());
       for (let i = 0; i < p.foodCap * p.seedFood; i++) this.spawnFood();
 
@@ -752,24 +768,90 @@
       return child;
     }
 
+    // --------------------------------------------------------------- detritus --
+    dropRemains(c, predation) {
+      const p = this.p;
+      if (c._remainsDropped) return;
+      c._remainsDropped = true;
+      // Matter/energy in the body: biomass + remaining nutrient + some ATP-equivalent.
+      const atpAsNutrient = Math.max(0, c.energy) * 0.2;
+      const matter = Math.max(0, c.biomass) * 12 + Math.max(0, c.nutrient) + atpAsNutrient;
+      if (matter <= 0.5) return;
+      const leave = predation ? (p.predationLeave != null ? p.predationLeave : 0.7) : 1;
+      const carcN = matter * (p.carcassYield != null ? p.carcassYield : 0.55) * leave;
+      if (carcN > 1 && this.food.length < p.foodCap + 80) {
+        // Carcasses are dense, scavengeable fauna food near where death occurred.
+        this.food.push({ x: c.x, y: c.y, e: Math.min(carcN, p.foodEnergyFauna * 2.5), type: 1, dead: false, carrion: true });
+      }
+      const compN = matter * (p.compostYield != null ? p.compostYield : 0.45) * (predation ? 0.6 : 1);
+      if (compN > 0.5 && this.detritus.length < (p.detritusCap || 260)) {
+        this.detritus.push({ x: c.x, y: c.y, n: Math.min(compN, 40), age: 0 });
+      }
+    }
+
+    compostFertility(x, y) {
+      // Local enrichment from nearby compost (deterministic scan, capped).
+      let boost = 0;
+      const d = this.detritus;
+      const r = 70, r2 = r * r;
+      for (let i = 0; i < d.length; i++) {
+        const o = d[i];
+        const dx = wrapDelta(o.x - x, this.w);
+        const dy = wrapDelta(o.y - y, this.h);
+        const dist2 = dx * dx + dy * dy;
+        if (dist2 < r2) boost += (o.n / 20) * (1 - dist2 / r2);
+      }
+      return clamp(boost, 0, 0.6);
+    }
+
     // ----------------------------------------------------------------- food --
     spawnFood() {
       const p = this.p;
-      let x, y;
-      if (this.patches.length && this.rng.next() < p.patchBias) {
-        const q = this.patches[this.rng.int(this.patches.length)];
-        x = wrap(q.x + this.rng.normal() * p.patchSpread, this.w);
-        y = wrap(q.y + this.rng.normal() * p.patchSpread, this.h);
-      } else {
-        x = this.rng.next() * this.w;
-        y = this.rng.next() * this.h;
+      let x, y, type = 0;
+      // Plant-like spread: flora often appears near existing flora or compost.
+      const wantFloraSpread = this.rng.next() < (p.floraSpread || 0);
+      if (wantFloraSpread && (this.food.length || this.detritus.length)) {
+        let anchor = null;
+        // prefer existing flora, else compost
+        for (let tries = 0; tries < 6 && !anchor; tries++) {
+          if (this.food.length && this.rng.next() < 0.75) {
+            const f = this.food[this.rng.int(this.food.length)];
+            if (f && !f.dead && !f.type) anchor = f;
+          } else if (this.detritus.length) {
+            anchor = this.detritus[this.rng.int(this.detritus.length)];
+          }
+        }
+        if (anchor) {
+          const rad = p.floraSpreadRadius || 55;
+          x = wrap(anchor.x + this.rng.normal() * rad, this.w);
+          y = wrap(anchor.y + this.rng.normal() * rad, this.h);
+          type = 0;
+        }
+      }
+      if (x == null) {
+        if (this.patches.length && this.rng.next() < p.patchBias) {
+          const q = this.patches[this.rng.int(this.patches.length)];
+          x = wrap(q.x + this.rng.normal() * p.patchSpread, this.w);
+          y = wrap(q.y + this.rng.normal() * p.patchSpread, this.h);
+        } else {
+          x = this.rng.next() * this.w;
+          y = this.rng.next() * this.h;
+        }
+        const hab0 = habitatAt(x, y, p, this.habitatSeed);
+        const faunaP = clamp((p.faunaChance || 0) * (0.55 + 0.55 * hab0.fertility), 0, 0.45);
+        type = this.rng.next() < faunaP ? 1 : 0;
       }
       const hab = habitatAt(x, y, p, this.habitatSeed);
-      const faunaP = clamp((p.faunaChance || 0) * (0.65 + 0.7 * hab.fertility), 0, 0.6);
-      const type = this.rng.next() < faunaP ? 1 : 0;
-      const eBase = type ? (p.foodEnergyFauna != null ? p.foodEnergyFauna : p.foodEnergy * 1.5) : p.foodEnergy;
-      const qual = type ? (0.85 + 0.3 * hab.fertility) : (0.7 + 0.6 * hab.fertility);
-      this.food.push({ x, y, e: eBase * qual, type, dead: false });
+      const comp = this.compostFertility(x, y);
+      const fertility = clamp(hab.fertility + comp, 0, 1.2);
+      if (type === 1) {
+        const eBase = p.foodEnergyFauna != null ? p.foodEnergyFauna : p.foodEnergy * 1.5;
+        this.food.push({ x, y, e: eBase * (0.85 + 0.25 * hab.fertility), type: 1, dead: false });
+      } else {
+        // flora struggles in overgrazed (low local fertility/compost) spots
+        const e = p.foodEnergy * (0.55 + 0.7 * fertility);
+        this.food.push({ x, y, e, type: 0, dead: false });
+      }
     }
 
     // --------------------------------------------------------------- species --
@@ -970,29 +1052,42 @@
         this.births++;
       }
 
-      // compact out the dead. A creature survives on ATP or on remaining body
-      // mass; a predation kill is marked dead with energy -1 and cannot pay.
+      // compact out the dead. Natural deaths leave remains that recycle into the ecosystem.
       let k = 0;
       for (let i = 0; i < list.length; i++) {
         const c = list[i];
         const alive = c.energy > 0 || (c.energy >= 0 && c.biomass > p.minBiomass);
         if (alive) {
-          // `dead` is a per-tick marker set by predation. A creature can be
-          // marked dead and still eat later in the same tick, so it may
-          // survive; clear the marker or it would stay invisible to sensing,
-          // predation and mating forever.
           c.dead = false;
+          c._remainsDropped = false;
           list[k++] = c;
         } else {
+          if (!c._remainsDropped) this.dropRemains(c, false);
           this.deaths++;
         }
       }
       list.length = k;
 
+      // decay compost/detritus
+      let dk = 0;
+      for (let i = 0; i < this.detritus.length; i++) {
+        const d = this.detritus[i];
+        d.n *= (1 - (p.detritusDecay || 0.003));
+        d.age = (d.age || 0) + 1;
+        if (d.n > 0.4) this.detritus[dk++] = d;
+      }
+      this.detritus.length = dk;
+
       k = 0;
       for (let i = 0; i < this.food.length; i++) {
         const f = this.food[i];
-        if (!f.dead) this.food[k++] = f;
+        if (f.dead) continue;
+        // Carcasses rot if not scavenged; plant matter stays until eaten or replaced.
+        if (f.carrion) {
+          f.e *= 0.996;
+          if (f.e < 2) continue;
+        }
+        this.food[k++] = f;
       }
       this.food.length = k;
 
@@ -1061,9 +1156,12 @@
             const cond = clamp(c.energy / (c.threshold || 1), 0, 1.2);
             let pCatch = clamp(0.18 + 0.22 * (ratio - p.preySizeRatio) + 0.22 * spdAdv + 0.10 * cond - 0.28 * preyDef, 0.05, 0.95);
             if (this.rng.next() < pCatch) {
-              const gain = Math.max(0, o.energy) * p.preyEnergyGain + o.mass * p.preyMassGain;
-              c.energy = Math.min(c.maxEnergy, c.energy + gain);
+              // Predator consumes part immediately; rest becomes carcass (scavengeable).
+              const consume = 0.55;
+              const immediate = (Math.max(0, o.energy) * p.preyEnergyGain + o.mass * p.preyMassGain) * consume;
+              c.energy = Math.min(c.maxEnergy, c.energy + immediate);
               c.kills++;
+              this.dropRemains(o, true);
               o.energy = -1;
               o.dead = true;
               c.huntCooldown = 6 + Math.min(18, ((ratio - 1) * 4) | 0);
@@ -1268,7 +1366,7 @@
     // ------------------------------------------------------------ serialize --
     serialize() {
       return {
-        version: 7,
+        version: 8,
         seed: this.seed,
         habitatSeed: this.habitatSeed >>> 0,
         rng: this.rng.state >>> 0,
@@ -1288,7 +1386,8 @@
         asexualBirths: this.asexualBirths,
         params: this.p,
         patches: this.patches.map((q) => ({ x: q.x, y: q.y, vx: q.vx, vy: q.vy })),
-        food: this.food.map((f) => ({ x: f.x, y: f.y, e: f.e, type: f.type | 0 })),
+        food: this.food.map((f) => ({ x: f.x, y: f.y, e: f.e, type: f.type | 0, carrion: f.carrion ? 1 : 0 })),
+        detritus: this.detritus.map((d) => ({ x: d.x, y: d.y, n: d.n, age: d.age | 0 })),
         species: this.species.map((sp) => ({
           id: sp.id,
           hue: sp.hue,
@@ -1336,7 +1435,7 @@
     }
 
     static fromJSON(obj) {
-      if (!obj || (obj.version !== 1 && obj.version !== 2 && obj.version !== 3 && obj.version !== 4 && obj.version !== 5 && obj.version !== 6 && obj.version !== 7)) {
+      if (!obj || obj.version < 1 || obj.version > 8) {
         throw new Error('Unsupported save file');
       }
       const params = Object.assign({}, obj.params || {});
@@ -1368,7 +1467,10 @@
         x: +q.x, y: +q.y, vx: +q.vx || 0, vy: +q.vy || 0,
       }));
       w.food = (obj.food || []).map((f) => ({
-        x: +f.x, y: +f.y, e: +f.e, type: f.type | 0, dead: false,
+        x: +f.x, y: +f.y, e: +f.e, type: f.type | 0, carrion: !!f.carrion, dead: false,
+      }));
+      w.detritus = (obj.detritus || []).map((d) => ({
+        x: +d.x, y: +d.y, n: +d.n || 0, age: d.age | 0,
       }));
       w.creatures = (obj.creatures || []).map((c) => {
         if (!c.genes || !Array.isArray(c.w)) {

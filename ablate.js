@@ -20,11 +20,13 @@ const A = require('./sim.js');
 const TICKS = parseInt(process.env.TICKS || '20000', 10);
 const SEEDS = (process.env.SEEDS || '1,2,3,4').split(',').map(Number);
 const IMMIGRATION_BELOW = process.env.IMMIGRATION_BELOW === undefined ? undefined : parseFloat(process.env.IMMIGRATION_BELOW);
+const REALISTIC = process.env.REALISTIC === '1';
 const burn = Math.floor(TICKS * 0.2);
 
 function makeOpts(seed) {
   const opts = { seed };
   if (IMMIGRATION_BELOW !== undefined) opts.immigrationBelow = IMMIGRATION_BELOW;
+  if (REALISTIC) opts.realisticMode = true;
   return opts;
 }
 
