@@ -251,6 +251,7 @@
     justify-content: center;
     padding: 20px;
     background: rgba(8, 10, 14, 0.62);
+    touch-action: manipulation;
   }
   #help-modal.open { display: flex; }
   .help-window {
@@ -267,7 +268,7 @@
   .help-window p { margin: 0 0 14px; }
   .help-window b { color: var(--ink); font-weight: 600; }
   .help-actions { display: flex; justify-content: flex-end; }
-  #btn-help-ok { min-width: 72px; }
+  #btn-help-ok { min-width: 72px; touch-action: manipulation; cursor: pointer; }
 </style>
 </head>
 <body>

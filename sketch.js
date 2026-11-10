@@ -1012,10 +1012,17 @@ function setupUI() {
     try { localStorage.setItem('alife-help-dismissed', '1'); } catch (_) {}
     showHelpModal(false);
   };
+  const bindTap = (el, fn) => {
+    if (!el) return;
+    const h = (e) => { if (e) { if (e.cancelable) e.preventDefault(); e.stopPropagation(); } fn(); };
+    el.addEventListener('click', h);
+    el.addEventListener('touchend', h, { passive: false });
+  };
   if ($('btn-help')) $('btn-help').onclick = () => showHelpModal(true);
-  if ($('btn-help-ok')) $('btn-help-ok').onclick = dismissHelp;
+  bindTap($('btn-help-ok'), dismissHelp);
   if ($('help-modal')) {
     $('help-modal').addEventListener('click', (e) => { if (e.target && e.target.id === 'help-modal') dismissHelp(); });
+    $('help-modal').addEventListener('touchend', (e) => { if (e.target && e.target.id === 'help-modal') { if (e.cancelable) e.preventDefault(); dismissHelp(); } }, { passive: false });
   }
   try {
     if (localStorage.getItem('alife-help-dismissed') !== '1') showHelpModal(true);
