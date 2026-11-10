@@ -609,8 +609,9 @@
       c.drag = clamp(1.05 - 0.18 * mf + 0.10 * Math.sqrt(c.mass), 0.7, 1.45);
       // Vigilance: brain effort + nerve tissue raise alertness; fatigue lowers it.
       // Updated after the brain reads inputs; used for sensing radius next tick.
-      const alertBase = c.alert != null ? c.alert : 0.4;
-      c.alert = clamp(alertBase * 0.6 + 0.4 * (0.5 * clamp(c.energy / (c.threshold || 1), 0, 1.2) + 0.3 * nf + 0.2), 0.1, 1);
+      const alertBase = (c.alert != null && Number.isFinite(c.alert)) ? c.alert : 0.4;
+      const eFrac = Number.isFinite(c.energy) ? clamp(c.energy / (c.threshold || 1), 0, 1.2) : 0.55;
+      c.alert = clamp(alertBase * 0.6 + 0.4 * (0.5 * eFrac + 0.3 * nf + 0.2), 0.1, 1);
     }
 
     updateRegulation(c, fprox, crowding) {
@@ -677,8 +678,8 @@
       c.maxEnergy = c.threshold * 1.7;
       c.matureBiomass = targetMass * p.matureFrac;
       this.setBiomass(c, targetMass * p.birthMassFrac);
-      this.computeTraits(c);
       c.energy = c.threshold * 0.55;
+      this.computeTraits(c);
       return c;
     }
 
@@ -1011,7 +1012,7 @@
 
     updateCreature(c) {
       const p = this.p;
-      const alertEff = c.alert != null ? c.alert : 0.4;
+      const alertEff = (c.alert != null && Number.isFinite(c.alert)) ? c.alert : 0.4;
       const sense = c.traits.sense * (1 + (p.alertSenseBoost || 0) * alertEff);
       const sense2 = sense * sense;
 
@@ -1154,7 +1155,9 @@
       const turn = out[0];
       const thrust = (out[1] + 1) * 0.5;
       const effort = (out[2] + 1) * 0.5; // 0..1 brain-controlled exertion
-      c.alert = clamp(0.35 * (c.alert != null ? c.alert : 0.4) + 0.65 * (0.6 * effort + 0.25 * (c.tissues ? c.tissues[2] : 0.25) + 0.15 * clamp(c.energy / (c.threshold || 1), 0, 1)), 0.08, 1);
+      const prevAlert = (c.alert != null && Number.isFinite(c.alert)) ? c.alert : 0.4;
+      const eFracA = Number.isFinite(c.energy) ? clamp(c.energy / (c.threshold || 1), 0, 1) : 0.55;
+      c.alert = clamp(0.35 * prevAlert + 0.65 * (0.6 * effort + 0.25 * (c.tissues ? c.tissues[2] : 0.25) + 0.15 * eFracA), 0.08, 1);
       c.heading = wrap(c.heading + turn * (c.turnRate || p.maxTurn), TAU);
 
       // Move with ecological context: sensed resources raise drive, but effort
@@ -1314,6 +1317,7 @@
           energy: c.energy,
           nutrient: c.nutrient,
           diet: +c.diet || 0,
+          alert: Number.isFinite(c.alert) ? c.alert : 0.4,
           biomass: c.biomass,
           eaten: c.eaten,
           kills: c.kills,
@@ -1393,6 +1397,7 @@
         cr.matedTick = c.matedTick == null ? -1 : (c.matedTick | 0);
         cr.huntCooldown = c.huntCooldown | 0;
         cr.origin = c.origin | 0;
+        cr._savedAlert = Number.isFinite(c.alert) ? clamp(+c.alert, 0.08, 1) : 0.4;
         cr.species = c.species | 0;
         cr.speciesHue = +c.speciesHue || 0;
         cr.diet = Number.isFinite(c.diet) ? clamp(+c.diet, 0, 1) : 0;
@@ -1407,6 +1412,8 @@
           }
         }
         w.computeTraits(cr);
+        cr.alert = cr._savedAlert != null ? cr._savedAlert : cr.alert;
+        delete cr._savedAlert;
         return cr;
       });
 
