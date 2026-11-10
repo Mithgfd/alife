@@ -28,6 +28,8 @@ let speciesSort = 'id';
 let showPanelDetails = false;
 let showHelp = false;
 let worldOnly = false;
+let view3D = false;
+let g3d = null;
 let viewScale = 1, viewOx = 0, viewOy = 0;
 let camX = W / 2, camY = H / 2, camZ = 1;
 let camTX = W / 2, camTY = H / 2, camTZ = 1;
@@ -120,21 +122,33 @@ function draw() {
 
   stepCamera();
   background(worldOnly ? color(226, 28, 8) : color(226, 24, 7));
-  const vt = getWorldTransform();
-  push();
-  if (!worldOnly) {
-    drawingContext.save();
-    drawingContext.beginPath();
-    drawingContext.rect(PAD, PAD, W, H);
-    drawingContext.clip();
+  if (view3D) {
+    ensure3D();
+    drawWorld3D();
+    if (!worldOnly) {
+      image(g3d, PAD, PAD, W, H);
+      drawPanel();
+    } else {
+      image(g3d, 0, 0, width, height);
+      if (selected) drawWorldOnlyInspector(selected);
+    }
+  } else {
+    const vt = getWorldTransform();
+    push();
+    if (!worldOnly) {
+      drawingContext.save();
+      drawingContext.beginPath();
+      drawingContext.rect(PAD, PAD, W, H);
+      drawingContext.clip();
+    }
+    translate(vt.ox, vt.oy);
+    scale(vt.scale);
+    drawWorld();
+    if (!worldOnly) drawingContext.restore();
+    pop();
+    if (!worldOnly) drawPanel();
+    else if (selected) drawWorldOnlyInspector(selected);
   }
-  translate(vt.ox, vt.oy);
-  scale(vt.scale);
-  drawWorld();
-  if (!worldOnly) drawingContext.restore();
-  pop();
-  if (!worldOnly) drawPanel();
-  else if (selected) drawWorldOnlyInspector(selected);
 }
 
 function sampleWorld() {
@@ -491,6 +505,213 @@ function drawWorldOnlyInspector(c) {
   pop();
 }
 
+// -------------------------------------------------------------------- 3D --
+function ensure3D() {
+  const cw = Math.max(1, Math.floor(W));
+  const ch = Math.max(1, Math.floor(H));
+  if (!g3d || g3d.width !== cw || g3d.height !== ch) {
+    g3d = createGraphics(cw, ch, WEBGL);
+  }
+}
+
+function wposX(o) {
+  const focused = !!(focusCreatureId || focusSpeciesId);
+  return focused ? camX + wrapDeltaLocal(o.x - camX, W) : o.x;
+}
+function wposY(o) {
+  const focused = !!(focusCreatureId || focusSpeciesId);
+  return focused ? camY + wrapDeltaLocal(o.y - camY, H) : o.y;
+}
+
+function drawWorld3D() {
+  const g = g3d;
+  if (!g) return;
+  g.push();
+  g.colorMode(HSB, 360, 100, 100, 100);
+  g.clear();
+  g.background(226, 28, 8);
+  const fov = 0.7;
+  const camDist = 520;
+  g.perspective(fov, g.width / g.height, 5, 3000);
+  g.camera(0, -320, camDist, 0, 40, 0, 0, 1, 0);
+  g.ambientLight(0, 0, 55);
+  g.directionalLight(0, 0, 90, 0.2, 0.6, -1);
+  g.directionalLight(30, 15, 35, -0.6, 0.3, -0.5);
+
+  // ground
+  g.push();
+  g.noStroke();
+  g.translate(0, 90, 0);
+  g.rotateX(HALF_PI);
+  g.fill(215, 20, 18, 100);
+  g.plane(W * 1.02, H * 1.02);
+  g.pop();
+  // subtle grid
+  g.stroke(210, 12, 28, 35);
+  g.strokeWeight(1);
+  const step = 92;
+  for (let x = -W / 2; x <= W / 2; x += step) g.line(x, 89.5, -H / 2, x, 89.5, H / 2);
+  for (let y = -H / 2; y <= H / 2; y += step) g.line(-W / 2, 89.5, y, W / 2, 89.5, y);
+
+  const ox = -W / 2, oy = -H / 2;
+
+  // detritus
+  if (world.detritus && world.detritus.length) {
+    g.noStroke();
+    for (let i = 0; i < world.detritus.length; i++) {
+      const d = world.detritus[i];
+      const a = clamp01((d.n || 0) / 30);
+      if (a <= 0) continue;
+      const px = wposX(d) + ox, pz = wposY(d) + oy;
+      g.push();
+      g.translate(px, 88 - a * 1.5, pz);
+      g.fill(35, 25, 30 + a * 10, 80);
+      g.sphere(1.2 + 2.2 * a, 5, 4);
+      g.pop();
+    }
+  }
+
+  // food
+  for (let i = 0; i < world.food.length; i++) {
+    drawFood3D(g, world.food[i], ox, oy);
+  }
+  // creatures
+  for (let i = 0; i < world.creatures.length; i++) {
+    drawCreature3D(g, world.creatures[i], ox, oy);
+  }
+
+  // selected highlight
+  if (selected) {
+    const sx = wposX(selected) + ox, sz = wposY(selected) + oy;
+    g.push();
+    g.translate(sx, 88, sz);
+    g.rotateX(HALF_PI);
+    g.noFill();
+    g.stroke(0, 0, 100, 70);
+    g.strokeWeight(2);
+    g.circle(0, 0, selected.radius * 3.2);
+    g.pop();
+  }
+  g.pop();
+}
+
+function drawFood3D(g, f, ox, oy) {
+  const x = wposX(f) + ox, z = wposY(f) + oy;
+  const h1 = hash01((f.x * 10) | 0, (f.y * 10) | 0, 1);
+  const h2 = hash01((f.x * 10) | 0, (f.y * 10) | 0, 2);
+  const h3 = hash01((f.x * 10) | 0, (f.y * 10) | 0, 3);
+  const r = 1.6 + h3 * 1.6;
+  const fauna = !!f.type;
+  const carrion = !!f.carrion;
+  g.push();
+  g.translate(x, 86 - r * 0.3, z);
+  g.rotateY(h1 * TAU);
+  g.noStroke();
+  if (fauna) {
+    const hue = carrion ? 12 : (18 + h1 * 18);
+    const sat = carrion ? 35 : (55 + h2 * 20);
+    g.fill(hue, sat, carrion ? 45 : 62, 95);
+    if (h2 < 0.5) {
+      g.ellipsoid(r * 1.4, r, r * 1.1, 6, 5);
+    } else {
+      g.sphere(r * 1.1, 6, 5);
+      g.push(); g.translate(r * 0.4, -r * 0.2, 0); g.fill(hue + 10, sat - 10, 78, 80); g.sphere(r * 0.55, 5, 4); g.pop();
+    }
+  } else {
+    const hue = 95 + h1 * 35;
+    g.fill(hue, 48, 58, 95);
+    const kind = (h2 * 3) | 0;
+    if (kind === 0) { g.ellipsoid(r * 1.5, r * 0.8, r * 1.1, 6, 4); }
+    else if (kind === 1) { g.sphere(r, 6, 5); g.push(); g.translate(0, -r * 0.5, 0); g.fill(hue - 20, 40, 70, 90); g.sphere(r * 0.45, 4, 4); g.pop(); }
+    else { g.push(); g.rotateZ(h3); g.box(r * 2.2, r * 0.7, r * 1.2); g.pop(); }
+    // stem/leaf hint
+    g.stroke(hue - 25, 35, 45, 70);
+    g.strokeWeight(0.8);
+    g.line(0, -r * 0.6, 0, 0, -r * 1.5, 0);
+  }
+  g.pop();
+}
+
+function drawCreature3D(g, c, ox, oy) {
+  const x = wposX(c) + ox, z = wposY(c) + oy;
+  const hue = (colorBy === 'species' ? c.speciesHue : c.genes.hue) * 360;
+  const e = clamp01(c.energy / (c.threshold || 1));
+  const t = c.tissues || [0.25, 0.25, 0.25, 0.25];
+  const muscle = t[1], nerve = t[2], gut = t[0], gonad = t[3];
+  const spd = c.traits && c.traits.speedMax ? c.traits.speedMax : (c.genes.speedMax || 1);
+  const r = c.radius;
+  const len = r * (1.1 + muscle * 0.55 + spd * 0.08);
+  const wid = r * (0.82 + gut * 0.45 - muscle * 0.12);
+  const hei = r * (0.55 + muscle * 0.2 + nerve * 0.15);
+  const sat = 52 + gonad * 18;
+  const bri = 48 + 44 * e;
+
+  g.push();
+  g.translate(x, 84 - hei * 0.6, z);
+  g.rotateY(-c.heading);
+  g.noStroke();
+
+  // tail
+  const tailN = 1 + (muscle > 0.32 ? 1 : 0) + (spd > 1.6 ? 1 : 0);
+  for (let i = 0; i < tailN; i++) {
+    const ang = (i - (tailN - 1) / 2) * (0.28 + muscle * 0.15);
+    g.push();
+    g.translate(-len * 0.8, 0, 0);
+    g.rotateY(ang);
+    g.fill(hue, sat - 8, bri - 12, 90);
+    g.ellipsoid(len * 0.55, hei * 0.28, wid * 0.22, 5, 4);
+    g.pop();
+  }
+
+  // body
+  g.fill(hue, sat, bri, 98);
+  g.ellipsoid(len, hei, wid, 7, 6);
+  // belly
+  g.push();
+  g.translate(len * 0.1, hei * 0.2, 0);
+  g.fill(45 + gut * 25, 30 + gut * 20, bri + 5, 55);
+  g.ellipsoid(len * 0.6, hei * 0.35, wid * 0.55, 5, 4);
+  g.pop();
+
+  // head bump
+  g.push();
+  g.translate(len * 0.75, -hei * 0.05, 0);
+  g.fill(hue, sat - 5, bri + 4, 95);
+  g.sphere(Math.max(hei * 0.55, wid * 0.45), 6, 5);
+  // eye
+  g.translate(len * 0.18, -hei * 0.15, -wid * 0.22);
+  g.fill(0, 0, 100, 95); g.sphere(0.9 + nerve * 0.7, 5, 4);
+  g.translate(0.35, 0, 0); g.fill(220, 60, 20, 95); g.sphere(0.45 + nerve * 0.3, 4, 3);
+  g.pop();
+
+  // antennae
+  if ((c.traits && c.traits.sense ? c.traits.sense : c.genes.sense) > 35) {
+    const al = r * (0.4 + nerve * 0.6);
+    for (const side of [-1, 1]) {
+      g.push();
+      g.translate(len * 0.7, -hei * 0.2, side * wid * 0.35);
+      g.stroke(hue, 35, 92, 80); g.strokeWeight(1);
+      g.line(0, 0, 0, al * 0.7, -al * 0.8, side * al * 0.5);
+      g.noStroke(); g.translate(al * 0.7, -al * 0.8, side * al * 0.5);
+      g.fill(55, 50, 95, 90); g.sphere(0.7 + nerve * 0.4, 4, 3);
+      g.pop();
+    }
+  }
+
+  // fins/limbs hint for high muscle
+  if (muscle > 0.3) {
+    for (const side of [-1, 1]) {
+      g.push();
+      g.translate(0, hei * 0.1, side * wid * 0.85);
+      g.rotateZ(side * 0.4);
+      g.fill(hue, sat - 12, bri - 5, 75);
+      g.ellipsoid(len * 0.25, hei * 0.12, wid * 0.35, 4, 3);
+      g.pop();
+    }
+  }
+  g.pop();
+}
+
 // ------------------------------------------------------------------ panel --
 function drawPanel() {
   const s = world.stats();
@@ -782,6 +1003,7 @@ function keyPressed() {
 }
 
 function mousePressed() {
+  if (view3D) return; // 3D view is visual-only for now; switch to 2D to select
   if (!worldOnly && detailsHit && mouseX >= detailsHit.x && mouseX <= detailsHit.x + detailsHit.w &&
       mouseY >= detailsHit.y && mouseY <= detailsHit.y + detailsHit.h) {
     showPanelDetails = !showPanelDetails;
@@ -1043,6 +1265,11 @@ function setupUI() {
     // In restricted contexts, show once per load; it can be dismissed.
     showHelpModal(true);
   }
+  if ($('btn-view3d')) $('btn-view3d').onclick = () => {
+    view3D = !view3D;
+    if (view3D) flash('3D view on (visual); switch to 2D to select');
+    syncUI();
+  };
   if ($('btn-fullscreen')) $('btn-fullscreen').onclick = toggleFullscreenWorld;
   if ($('btn-exit-world')) $('btn-exit-world').onclick = toggleFullscreenWorld;
   $('seed-label').onclick = shareLink;
@@ -1066,6 +1293,10 @@ function syncUI() {
   $('btn-sexual').classList.toggle('on', world.p.sexual);
   if ($('btn-species')) $('btn-species').classList.toggle('on', showSpeciesCatalog);
   if ($('btn-species-fab')) $('btn-species-fab').classList.toggle('on', showSpeciesCatalog);
+  if ($('btn-view3d')) {
+    $('btn-view3d').textContent = '3D: ' + (view3D ? 'on' : 'off');
+    $('btn-view3d').classList.toggle('on', view3D);
+  }
   if ($('btn-fullscreen')) {
     $('btn-fullscreen').textContent = worldOnly ? 'exit world view' : 'fullscreen';
     $('btn-fullscreen').classList.toggle('on', worldOnly);
