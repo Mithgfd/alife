@@ -181,6 +181,8 @@ Inputs are *egocentric* and local — forward/right relative to heading, plus in
 
 Outputs: `turn ∈ [−1, 1]`, `thrust ∈ [0, 1]`, `effort ∈ [0, 1]` (exertion/vigilance). Movement is shaped by morphology (turn rate, drag/inertia) and ecological context (resources, hazard, effort), and sprinting costs much more energy than cruising or resting.
 
+**Vigilance and active sensing.** Brain effort, nerve tissue, and energy state set a per-tick **alertness** (`alert`, 0..1). Higher alertness expands effective perception radius (`alertSenseBoost`) but costs active-sensing ATP (`senseCost`, scaling with radius² and mass^0.75). This makes vigilance/search a real energetic tradeoff (see `alert` in `log.js`/`stats()`), rather than perception being free.
+
 > Egocentric inputs matter. With world-frame `dx/dy` the network has no idea which
 > way it is facing, so "steer toward food" is not a linear function it can learn.
 > With forward/right it is one positive weight.
@@ -324,6 +326,7 @@ All in `DEFAULTS` at the top of `sim.js`.
 | `foodEnergy`, `foodEnergyFauna`, `faunaChance` | Nutrient value and rarity of flora/fauna; creates dietary niches. |
 | `habitatScale`, `habitatStrength`, `hazardStrength` | Spatial fertility/hazard fields (deterministic niches). |
 | `hazardCost`, `senescenceAge`, `senescenceCost` | Habitat stress and age-related maintenance. |
+| `alertSenseBoost`, `senseCost` | Vigilance expands perception but costs ATP (active sensing tradeoff). |
 | `maxPop` | Hard ceiling. If the population pins here, selection is neutral. |
 | `predation` | Turn it off for a pure foraging world. |
 | `preySizeRatio` | Minimum size advantage to attempt predation. |

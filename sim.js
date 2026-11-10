@@ -310,6 +310,8 @@
     hazardCost: 0.025,      // extra ATP drain per hazard * mass^0.75
     senescenceAge: 3000,
     senescenceCost: 0.015,  // extra basal drain fraction over senescence age
+    alertSenseBoost: 0.25,  // how much vigilance (effort) expands perception
+    senseCost: 0.012,       // ATP cost of active sensing per (radius/80)^2 * mass^0.75
 
     startPop: 70,
     maxPop: 600,          // hard CPU / stability ceiling
@@ -605,6 +607,10 @@
       c.turnRate = (this.p.maxTurn || 0.28) * (0.65 + 0.7 * mf) / inertia;
       c.defense = clamp(0.08 + 0.22 * Math.sqrt(c.mass) + 0.35 * mf + 0.15 * nf, 0, 0.85);
       c.drag = clamp(1.05 - 0.18 * mf + 0.10 * Math.sqrt(c.mass), 0.7, 1.45);
+      // Vigilance: brain effort + nerve tissue raise alertness; fatigue lowers it.
+      // Updated after the brain reads inputs; used for sensing radius next tick.
+      const alertBase = c.alert != null ? c.alert : 0.4;
+      c.alert = clamp(alertBase * 0.6 + 0.4 * (0.5 * clamp(c.energy / (c.threshold || 1), 0, 1.2) + 0.3 * nf + 0.2), 0.1, 1);
     }
 
     updateRegulation(c, fprox, crowding) {
@@ -655,6 +661,7 @@
         speciesHue: 0,
         matedTick: -1,
         huntCooldown: 0,
+        alert: 0.4, // 0..1 vigilance; updated from brain effort each tick
         origin: 0, // 0 founder/native lineage, 1 immigrant lineage (propagates)
         nutrient: 0,
         diet: 0, // EMA of food type eaten: 0 flora, 1 fauna
@@ -1004,7 +1011,8 @@
 
     updateCreature(c) {
       const p = this.p;
-      const sense = c.traits.sense;
+      const alertEff = c.alert != null ? c.alert : 0.4;
+      const sense = c.traits.sense * (1 + (p.alertSenseBoost || 0) * alertEff);
       const sense2 = sense * sense;
 
       // ---- nearest food ----
@@ -1146,6 +1154,7 @@
       const turn = out[0];
       const thrust = (out[1] + 1) * 0.5;
       const effort = (out[2] + 1) * 0.5; // 0..1 brain-controlled exertion
+      c.alert = clamp(0.35 * (c.alert != null ? c.alert : 0.4) + 0.65 * (0.6 * effort + 0.25 * (c.tissues ? c.tissues[2] : 0.25) + 0.15 * clamp(c.energy / (c.threshold || 1), 0, 1)), 0.08, 1);
       c.heading = wrap(c.heading + turn * (c.turnRate || p.maxTurn), TAU);
 
       // Move with ecological context: sensed resources raise drive, but effort
@@ -1168,7 +1177,8 @@
       const senAge = p.senescenceAge || 3000;
       const sen = c.age > senAge ? (c.age - senAge) / senAge * (p.senescenceCost || 0) : 0;
       const hazardDrain = (p.hazardCost || 0) * (hab ? hab.hazard : 0) * c.mass075;
-      c.energy -= p.basal * (1 + sen) + p.basalMass * c.mass + p.moveCost * c.mass075 * v2 * (1 + sprintCost * sprint * sprint) + hazardDrain;
+      const senseCost = (p.senseCost || 0) * alertEff * Math.pow(Math.max(0, sense) / 80, 2) * c.mass075;
+      c.energy -= p.basal * (1 + sen) + p.basalMass * c.mass + p.moveCost * c.mass075 * v2 * (1 + sprintCost * sprint * sprint) + hazardDrain + senseCost;
 
       // ---- eat (one item per tick, nearest first) ----
       // Food is nutrient, not usable energy. A full gut means the creature
@@ -1460,7 +1470,7 @@
     stats() {
       const n = this.creatures.length;
       let size = 0, speed = 0, sense = 0, mut = 0, repro = 0, gen = 0, energy = 0, kills = 0;
-      let enzyme = 0, biomass = 0, maturity = 0, nutrient = 0, regActivity = 0, diet = 0, defense = 0, immDesc = 0;
+      let enzyme = 0, biomass = 0, maturity = 0, nutrient = 0, regActivity = 0, diet = 0, defense = 0, immDesc = 0, alert = 0;
       let hueSin = 0, hueCos = 0;
       let cells = 0, gut = 0, muscle = 0, nerve = 0, gonad = 0;
       for (let i = 0; i < n; i++) {
@@ -1474,6 +1484,7 @@
         enzyme += t.enzyme;
         diet += c.diet || 0;
         defense += c.defense || 0;
+        alert += c.alert != null ? c.alert : 0;
         if (c.origin) immDesc++;
         const ha = (c.genes.hue || 0) * TAU;
         hueSin += Math.sin(ha); hueCos += Math.cos(ha);
@@ -1508,6 +1519,7 @@
         season: 0.5 + 0.5 * Math.sin(this.tick * 0.0017),
         diet: diet / d,
         defense: defense / d,
+        alert: alert / d,
         hue: hueMean,
         hueSpread: 1 - hR, // 0 concentrated, 1 uniform/drifted
         births: this.births,

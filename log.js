@@ -28,7 +28,7 @@ const w = new A.World(opts);
 
 const cols = [
   'tick', 'pop', 'food', 'faunaFood', 'season', 'species', 'births', 'deaths', 'immigrants', 'immDesc', 'native',
-  'avgGen', 'maxGen', 'size', 'speed', 'sense', 'enzyme', 'diet', 'defense',
+  'avgGen', 'maxGen', 'size', 'speed', 'sense', 'enzyme', 'diet', 'defense', 'alert',
   'mutRate', 'reproE', 'biomass', 'maturity', 'cells',
   'gut', 'muscle', 'nerve', 'gonad', 'regActivity', 'kills',
   'hue', 'hueSpread',
@@ -41,7 +41,7 @@ function row(s) {
     s.tick, s.pop, s.food, s.faunaFood ?? 0, (s.season ?? 0).toFixed(5), s.species, s.births, s.deaths, s.immigrants,
     (s.immDesc ?? 0).toFixed(5), (s.native ?? 1).toFixed(5),
     s.avgGen.toFixed(3), s.maxGen, s.size.toFixed(5), s.speed.toFixed(5),
-    s.sense.toFixed(5), s.enzyme.toFixed(5), (s.diet ?? 0).toFixed(5), (s.defense ?? 0).toFixed(5),
+    s.sense.toFixed(5), s.enzyme.toFixed(5), (s.diet ?? 0).toFixed(5), (s.defense ?? 0).toFixed(5), (s.alert ?? 0).toFixed(5),
     s.mutRate.toFixed(5), s.reproE.toFixed(5), s.biomass.toFixed(5), s.maturity.toFixed(5),
     s.cells.toFixed(3), t[0].toFixed(5), t[1].toFixed(5), t[2].toFixed(5),
     t[3].toFixed(5), s.regActivity.toFixed(5), s.kills,
